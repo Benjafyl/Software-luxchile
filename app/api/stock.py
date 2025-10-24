@@ -1,10 +1,11 @@
+# app/api/stock.py
 from fastapi import APIRouter
 from app.models.schemas import ConsultaSKU
-from app.services.stock_service import consultar_stock_por_sku
+from app.services.stock_service import consultar_stock_sku
 
-router = APIRouter(prefix="/stock", tags=["stock"])
+router = APIRouter()
 
 @router.post("/consultar")
-def consultar_stock(body: ConsultaSKU):
-    res = consultar_stock_por_sku(body.sku)
-    return res or {"mensaje": f"No se encontró el SKU {body.sku}"}
+def consultar_stock(data: ConsultaSKU):
+    return consultar_stock_sku(data.sku)
+    

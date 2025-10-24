@@ -1,10 +1,13 @@
-from fastapi import APIRouter
+# app/api/incidents.py
+from fastapi import APIRouter, HTTPException
 from app.models.schemas import IncidentCreate
-from app.services.incident_service import create_incident
+from app.services.incident_service import registrar_incidente
 
-router = APIRouter(prefix="/incidentes", tags=["incidentes"])
+router = APIRouter()
 
 @router.post("/registrar")
-def registrar_incidente(body: IncidentCreate):
-    new_id = create_incident(body)
-    return {"id": new_id, "status": "registrado"}
+def registrar(data: IncidentCreate):
+    try:
+        return registrar_incidente(data)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))

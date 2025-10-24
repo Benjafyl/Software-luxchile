@@ -1,17 +1,57 @@
+# app/services/incident_service.py
 from app.db.conn import get_db
 from app.models.schemas import IncidentCreate
 
-def create_incident(body: IncidentCreate) -> int:
+def _ensure_table(cur):
+    # Crea la tabla si no existe (demo simple)
+    cur.execute("""
+    CREATE TABLE IF NOT EXISTS incidentes (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        cargo_id TEXT,
+        vehicle_id TEXT,
+        employee_id TEXT,
+        type TEXT,
+        description TEXT,
+        lat REAL,
+        lon REAL
+    )
+    """)
+
+def registrar_incidente(data: IncidentCreate) -> dict:
+    """
+    Inserta un incidente y retorna el registro creado.
+    """
     conn = get_db()
     cur = conn.cursor()
+    _ensure_table(cur)
+
     cur.execute("""
-      INSERT INTO incidentes (cargo_id, vehicle_id, employee_id, type, description, lat, lon)
-      VALUES (?, ?, ?, ?, ?, ?, ?)
-    """, (body.cargo_id, body.vehicle_id, body.employee_id, body.type,
-          body.description or "", body.location.lat, body.location.lon))
+        INSERT INTO incidentes (cargo_id, vehicle_id, employee_id, type, description, lat, lon)
+        VALUES (?, ?, ?, ?, ?, ?, ?)
+    """, (
+        data.cargo_id,
+        data.vehicle_id,
+        data.employee_id,
+        data.type,
+        data.description,
+        data.location.lat,
+        data.location.lon
+    ))
     conn.commit()
     new_id = cur.lastrowid
+
+    # Devuelve el registro recién creado
+    cur.execute("SELECT id, cargo_id, vehicle_id, employee_id, type, description, lat, lon FROM incidentes WHERE id = ?", (new_id,))
+    row = cur.fetchone()
     conn.close()
-    # Notificación fake (para demo)
-    print(f"[ALERTA] Incidente #{new_id} tipo={body.type} cargo={body.cargo_id}")
-    return new_id
+
+    return {
+        "id": row["id"],
+        "cargo_id": row["cargo_id"],
+        "vehicle_id": row["vehicle_id"],
+        "employee_id": row["employee_id"],
+        "type": row["type"],
+        "description": row["description"],
+        "location": {"lat": row["lat"], "lon": row["lon"]},
+        "status": "ok"
+    }
