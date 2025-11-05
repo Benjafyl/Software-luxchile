@@ -21,8 +21,11 @@ class RouteResponse(BaseModel):
     distance_km: float
     toll_cost: float
     risk_score: float
-    duration_min: str    # formato H:MM
+    duration_min: str    # formato H:MM (compat)
     path: RouteSegment
+    # Campos adicionales para presentación local
+    duration_hms: str | None = None   # formato HH:MM:SS
+    toll_cost_clp: int | None = None  # total peajes en CLP
 
 # ---------- INCIDENTES ----------
 class IncidentCreate(BaseModel):

@@ -4,8 +4,11 @@ import requests
 from app.models.schemas import RouteRequest, RouteResponse, RouteSegment
 
 # Zonas ficticias para el MVP (coordenadas aprox)
-TOLL_ZONES = [(-33.45, -70.65, 5.0, 3.5)]  # Santiago: radio 5 km, peaje 3.5
+TOLL_ZONES = [(-33.45, -70.65, 5.0, 3.5)]  # Santiago: radio 5 km, peaje 3.5 (unidades)
 RISK_ZONES = [(-33.03, -71.55, 6.0, 0.6)]  # Viña: radio 6 km, riesgo 0.6
+
+# Conversión simple de “unidades” de peaje a CLP para el MVP
+TOLL_UNIT_TO_CLP = 1000
 
 # ------------------- AUXILIARES -------------------
 
@@ -40,6 +43,14 @@ def format_duration_hm(minutes: float) -> str:
     mins = int(minutes % 60)
     return f"{hours}:{mins:02d}"
 
+def format_duration_hms(minutes: float) -> str:
+    """Convierte minutos (float) a 'HH:MM:SS'."""
+    total_seconds = int(round(minutes * 60))
+    h = total_seconds // 3600
+    m = (total_seconds % 3600) // 60
+    s = total_seconds % 60
+    return f"{h:02d}:{m:02d}:{s:02d}"
+
 # ------------------- FALLBACK (línea recta) -------------------
 
 def _fallback_straight_route(req: RouteRequest) -> RouteResponse:
@@ -58,7 +69,9 @@ def _fallback_straight_route(req: RouteRequest) -> RouteResponse:
         toll_cost=round(toll, 2),
         risk_score=round(risk, 2),
         duration_min=format_duration_hm(duration_min),
-        path=RouteSegment(coords=path)
+        path=RouteSegment(coords=path),
+        duration_hms=format_duration_hms(duration_min),
+        toll_cost_clp=int(round(toll * TOLL_UNIT_TO_CLP)),
     )
 
 # ------------------- PRINCIPAL (OSRM) -------------------
@@ -98,7 +111,9 @@ def optimize_route(req: RouteRequest) -> RouteResponse:
             toll_cost=round(toll, 2),
             risk_score=round(risk, 2),
             duration_min=format_duration_hm(duration_minutes),
-            path=RouteSegment(coords=coords)
+            path=RouteSegment(coords=coords),
+            duration_hms=format_duration_hms(duration_minutes),
+            toll_cost_clp=int(round(toll * TOLL_UNIT_TO_CLP)),
         )
 
     except Exception:

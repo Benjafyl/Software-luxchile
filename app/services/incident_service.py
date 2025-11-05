@@ -4,18 +4,22 @@ from app.models.schemas import IncidentCreate
 
 def _ensure_table(cur):
     # Crea la tabla si no existe (demo simple)
-    cur.execute("""
-    CREATE TABLE IF NOT EXISTS incidentes (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        cargo_id TEXT,
-        vehicle_id TEXT,
-        employee_id TEXT,
-        type TEXT,
-        description TEXT,
-        lat REAL,
-        lon REAL
+    # Incluye created_at para compatibilidad con init_db
+    cur.execute(
+        """
+        CREATE TABLE IF NOT EXISTS incidentes (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            cargo_id TEXT,
+            vehicle_id TEXT,
+            employee_id TEXT,
+            type TEXT,
+            description TEXT,
+            lat REAL,
+            lon REAL,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        )
+        """
     )
-    """)
 
 def registrar_incidente(data: IncidentCreate) -> dict:
     """
