@@ -1,4 +1,4 @@
-// src/App.jsx
+﻿// src/App.jsx
 import React, { useMemo, useState, useEffect } from "react";
 import {
   BrowserRouter,
@@ -34,7 +34,7 @@ function LogoLuxChile({ size = 42 }) {
       </svg>
       <div className="leading-tight">
         <div className="font-semibold text-slate-800">LuxChile</div>
-        <div className="text-xs text-slate-500">Logística & Rutas</div>
+        <div className="text-xs text-slate-500">Logistica & Rutas</div>
       </div>
     </div>
   );
@@ -45,10 +45,22 @@ function LogoLuxChile({ size = 42 }) {
    =========================== */
 const API_BASE = import.meta.env.VITE_API_BASE || "http://127.0.0.1:8000";
 
+function getAuth() {
+  try {
+    const raw = localStorage.getItem("auth");
+    return raw ? JSON.parse(raw) : null;
+  } catch {
+    return null;
+  }
+}
+
 async function api(path, { method = "GET", body } = {}) {
+  const auth = getAuth();
+  const headers = { "Content-Type": "application/json" };
+  if (auth?.access_token) headers["Authorization"] = `Bearer ${auth.access_token}`;
   const res = await fetch(`${API_BASE}${path}`, {
     method,
-    headers: { "Content-Type": "application/json" },
+    headers,
     body: body ? JSON.stringify(body) : undefined,
   });
   if (!res.ok) {
@@ -88,11 +100,13 @@ function Shell({ user, onLogout, children }) {
           <LogoLuxChile size={34} />
           <nav className="ml-auto flex items-center gap-3 text-sm">
             <Link className="hover:underline" to="/home">Inicio</Link>
-            <Link className="hover:underline" to="/stock">Stock</Link>
+            {user?.role === 'admin' && (
+              <Link className="hover:underline" to="/stock">Stock</Link>
+            )}
             <Link className="hover:underline" to="/rutas">Rutas</Link>
             <Link className="hover:underline" to="/incidentes">Incidentes</Link>
-            <Link className="hover:underline" to="/asignaciones">Asignar carga</Link>
-            <span className="ml-4 text-slate-500">{user}</span>
+            <Link className="hover:underline" to="/asignaciones">{user?.role === 'admin' ? 'Asignar carga' : 'Mis cargas'}</Link>
+            <span className="ml-4 text-slate-500">{user?.full_name || user?.username}</span>
             <button
               className="ml-2 rounded-xl border px-3 py-1 text-sm hover:bg-slate-100"
               onClick={onLogout}
@@ -106,7 +120,7 @@ function Shell({ user, onLogout, children }) {
       <main className="mx-auto max-w-6xl px-4 py-6">{children}</main>
 
       <footer className="border-t py-4 text-center text-xs text-slate-500">
-        MVP académico • FastAPI + React
+        MVP academico - FastAPI + React
       </footer>
     </div>
   );
@@ -128,14 +142,22 @@ function Login({ onLogin }) {
     e.preventDefault();
     setError("");
     if (!user.trim() || !pass.trim()) {
-      setError("Completa usuario y contraseña.");
+      setError("Completa usuario y contrasena.");
       return;
     }
     setLoading(true);
-    setTimeout(() => {
-      onLogin(user.trim());
-      navigate("/home");
-    }, 400);
+    (async () => {
+      try {
+        const resp = await api("/auth/login", { method: "POST", body: { username: user.trim(), password: pass } });
+        localStorage.setItem("auth", JSON.stringify(resp));
+        onLogin({ ...resp.user, access_token: resp.access_token });
+        navigate("/home");
+      } catch (e) {
+        setError(e.message || "No se pudo iniciar sesion");
+      } finally {
+        setLoading(false);
+      }
+    })();
   }
 
   return (
@@ -149,7 +171,7 @@ function Login({ onLogin }) {
 
           <h2 className="text-2xl font-semibold text-slate-900 mb-1">Bienvenido</h2>
           <p className="text-slate-600 mb-8">
-            Ingresa tu usuario y contraseña para continuar.
+            Ingresa tu usuario y contrasena para continuar.
           </p>
 
           <form onSubmit={handleSubmit} className="space-y-4">
@@ -162,7 +184,7 @@ function Login({ onLogin }) {
               />
             </div>
             <div>
-              <label className="block text-sm text-slate-600 mb-1">Contraseña</label>
+              <label className="block text-sm text-slate-600 mb-1">contrasena</label>
               <input
                 type="password"
                 className="w-full rounded-xl border px-3 py-2"
@@ -176,7 +198,7 @@ function Login({ onLogin }) {
               disabled={loading}
               className="w-full rounded-xl bg-sky-600 py-2 text-white hover:bg-sky-700 disabled:opacity-50"
             >
-              {loading ? "Ingresando…" : "Ingresar"}
+              {loading ? "Ingresando...€¦" : "Ingresar"}
             </button>
           </form>
         </div>
@@ -244,6 +266,16 @@ function HomePage({ user = "" }) {
   const [recentInc, setRecentInc] = React.useState([]);
   const [recentRoutes, setRecentRoutes] = React.useState([]);
   const navigate = useNavigate();
+  function toHMS(minStr) {
+    if (!minStr) return '';
+    const parts = String(minStr).split(':');
+    if (parts.length === 2) {
+      const h = parts[0].padStart(2, '0');
+      const m = parts[1].padStart(2, '0');
+      return `${h}:${m}:00`;
+    }
+    return String(minStr);
+  }
 
   async function fetchRecentIncidents() {
     try {
@@ -263,9 +295,20 @@ function HomePage({ user = "" }) {
     }
   }
 
+  const [recentAsign, setRecentAsign] = React.useState([]);
+  async function fetchRecentAsignaciones() {
+    try {
+      const data = await api("/asignaciones?limit=3");
+      setRecentAsign(Array.isArray(data) ? data : []);
+    } catch (_) {
+      setRecentAsign([]);
+    }
+  }
+
   React.useEffect(() => {
     fetchRecentIncidents();
     fetchRecentRoutes();
+    fetchRecentAsignaciones();
   }, []);
 
   function refresh() {
@@ -283,7 +326,7 @@ function HomePage({ user = "" }) {
       ];
       return nxt;
     });
-    // refrescamos actividad reciente también
+    // refrescamos actividad reciente tambien
     fetchRecentIncidents();
     fetchRecentRoutes();
   }
@@ -297,34 +340,34 @@ function HomePage({ user = "" }) {
           alt="Camiones"
           className="absolute inset-0 h-full w-full object-cover grayscale opacity-30"
         />
-        <div className="relative z-10 flex flex-col md:flex-row md:items-end justify-between p-6 md:p-8 bg-gradient-to-br from-white/70 to-white/40">
+        <div className="relative z-10 flex flex-col md:flex-row md:items-end justify-between p-4 md:p-6 bg-gradient-to-br from-white/70 to-white/40">
           <div>
-            <h2 className="text-2xl font-semibold text-slate-900">Menú principal</h2>
+            <h2 className="text-2xl font-semibold text-slate-900">Menu principal</h2>
             <p className="text-slate-600">
-              {user ? `Hola, ${user}.` : "Bienvenido."} ¿Qué quieres hacer hoy?
+              {user ? `Hola, ${user?.full_name || user?.username || user}.` : "Bienvenido."} Que quieres hacer hoy?
             </p>
           </div>
           <button
             onClick={refresh}
             className="mt-4 md:mt-0 rounded-xl border border-slate-300 bg-white px-4 py-2 text-sm text-slate-800 hover:bg-slate-50"
           >
-            Actualizar métricas
+            Actualizar metricas
           </button>
         </div>
       </div>
 
       {/* KPIs */}
       <div className="mt-6 grid grid-cols-1 md:grid-cols-4 gap-4">
-        <StatCard label="Órdenes en tránsito" value={kpi.ordersInTransit} sublabel="flota activa" />
+        <StatCard label="Ordenes en transito" value={kpi.ordersInTransit} sublabel="flota activa" />
         <StatCard label="Incidentes (semana)" value={kpi.weeklyIncidents} sublabel="reportados" />
-        <StatCard label="Duración promedio" value={`${kpi.avgDurationMin} min`} sublabel="rutas completadas" />
+        <StatCard label="Duracion promedio" value={`${kpi.avgDurationMin} min`} sublabel="rutas completadas" />
         <div className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
           <p className="text-xs uppercase tracking-wide text-slate-500">Cumplimiento SLA</p>
           <div className="mt-1 flex items-end justify-between">
             <p className="text-2xl font-semibold text-slate-900">{kpi.slaOK}</p>
             <TrendSparkline points={trend} />
           </div>
-          <p className="mt-1 text-xs text-slate-500">últimos 7 días</p>
+          <p className="mt-1 text-xs text-slate-500">Ultimos 7 dias</p>
         </div>
       </div>
 
@@ -332,28 +375,28 @@ function HomePage({ user = "" }) {
       <div className="grid grid-cols-1 md:grid-cols-4 gap-4 mt-4">
         {[
           { title: "Consultar stock", desc: "Disponibilidad por SKU en todas las bodegas.", to: "/stock" },
-          { title: "Optimizar rutas", desc: "Distancia, duración y riesgo de trayectos.", to: "/rutas" },
-          { title: "Registrar incidente", desc: "Desvíos, accidentes o detenciones.", to: "/incidentes" },
-          { title: "Asignar carga", desc: "Responsable, vehículo y destinos.", to: "/asignaciones" },
+          { title: "Optimizar rutas", desc: "Distancia, Duracion y riesgo de trayectos.", to: "/rutas" },
+          { title: "Registrar incidente", desc: "Desvios, accidentes o detenciones.", to: "/incidentes" },
+          { title: "Asignar carga", desc: "Responsable, vehiculo y destinos.", to: "/asignaciones" },
         ].map((item) => (
-          <Link
+          ((item.title !== "Consultar stock") || user?.role === 'admin') && <Link
             key={item.title}
             to={item.to}
-            className="rounded-2xl border p-4 shadow-sm hover:shadow-md hover:-translate-y-1 transition-all bg-slate-50"
+            className="rounded-2xl border p-4 shadow-sm hover:shadow-md hover:-translate-y-1 transition-all bg-slate-50 min-h-[96px] flex"
           >
-            <div className="flex items-center justify-between">
+            <div className="flex items-center justify-between w-full">
               <div>
                 <h3 className="font-semibold text-slate-900">{item.title}</h3>
                 <p className="text-sm text-slate-500 mt-1">{item.desc}</p>
               </div>
-              <div className="text-sky-600 text-lg font-semibold">→</div>
+              <div className="text-sky-600 text-lg font-semibold self-center">></div>
             </div>
           </Link>
         ))}
       </div>
 
-      {/* Datos críticos (RESTABLECIDO) */}
-      <div className="mt-6 grid grid-cols-1 lg:grid-cols-2 gap-4">
+      {/* Datos críticos */}
+      <div className="mt-6 grid grid-cols-1 md:grid-cols-2 gap-4 max-w-4xl mx-auto">
         {/* Incidentes recientes */}
         <div className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm cursor-pointer hover:shadow-md"
              onClick={() => navigate('/incidentes/historial')}>
@@ -361,29 +404,33 @@ function HomePage({ user = "" }) {
             <h4 className="font-medium text-slate-900">Incidentes recientes</h4>
             <button onClick={(e)=>{e.stopPropagation(); navigate('/incidentes/historial')}} className="text-xs text-sky-600 hover:underline">Ver todo</button>
           </div>
-          <ul className="mt-3 divide-y divide-slate-100">
-            {recentInc.map((i) => {
-              const when = i.created_at
-                ? new Date(i.created_at)
-                : null;
-              const whenStr = when
-                ? when.toLocaleString()
-                : "";
-              return (
-                <li key={i.id} className="py-2 text-sm">
-                  <div className="flex items-center justify-between">
-                    <p className="text-slate-800">
-                      <span className="font-medium">{i.type}</span> • {i.cargo_id} • {i.employee_id}
-                    </p>
-                    <p className="text-slate-500">{whenStr}</p>
-                  </div>
-                </li>
-              );
-            })}
-            {recentInc.length === 0 && (
-              <li className="py-2 text-sm text-slate-500">Sin datos recientes.</li>
-            )}
-          </ul>
+          <table className="mt-3 w-full text-sm">
+            <thead>
+              <tr className="text-left text-slate-500">
+                <th className="py-2">Tipo</th>
+                <th>Carga</th>
+                <th>RUT</th>
+                <th>Fecha</th>
+              </tr>
+            </thead>
+            <tbody>
+              {recentInc.map((i) => {
+                const when = i.created_at ? new Date(i.created_at) : null;
+                const whenStr = when ? when.toLocaleString() : "";
+                return (
+                  <tr key={i.id} className="border-t text-slate-800">
+                    <td className="py-2 font-medium">{i.type}</td>
+                    <td>{i.cargo_id}</td>
+                    <td>{i.employee_id}</td>
+                    <td className="text-slate-500">{whenStr}</td>
+                  </tr>
+                );
+              })}
+              {recentInc.length === 0 && (
+                <tr className="border-t text-slate-500"><td className="py-2" colSpan={4}>Sin datos recientes.</td></tr>
+              )}
+            </tbody>
+          </table>
         </div>
 
         {/* Rutas recientes */}
@@ -399,20 +446,21 @@ function HomePage({ user = "" }) {
                 <th className="py-2">Origen</th>
                 <th>Destino</th>
                 <th>Dist.</th>
-                <th>Duración</th>
+                <th>Duracion</th>
                 <th>Riesgo</th>
               </tr>
             </thead>
             <tbody>
               {recentRoutes.map((r) => {
                 const risk = r.risk_score <= 0.33 ? "Bajo" : r.risk_score <= 0.66 ? "Medio" : "Alto";
+                const dur = r.duration_hms || toHMS(r.duration_min);
                 return (
                   <tr key={r.id} className="border-t text-slate-800">
                     <td className="py-2">{r.origin_text || `${r.origin_lat?.toFixed?.(2)}, ${r.origin_lon?.toFixed?.(2)}`}</td>
                     <td>{r.destination_text || `${r.destination_lat?.toFixed?.(2)}, ${r.destination_lon?.toFixed?.(2)}`}</td>
                     <td>{Math.round(r.distance_km)} km</td>
-                    <td>{r.duration_min}</td>
-                    <td>
+                    <td>{dur}</td>
+                  <td>
                       <span
                         className={`rounded-full px-2 py-0.5 text-xs ${
                           risk === "Bajo"
@@ -433,6 +481,16 @@ function HomePage({ user = "" }) {
               )}
             </tbody>
           </table>
+        </div>
+        {/* Asignaciones recientes (mini dashboard) */}
+        <div className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm md:col-span-2">
+          <div className="flex items-center justify-between">
+            <h4 className="font-medium text-slate-900">Asignaciones recientes</h4>
+            <button onClick={() => navigate('/asignaciones')} className="text-xs text-sky-600 hover:underline">Ver todo</button>
+          </div>
+          <div className="mt-3 overflow-x-auto">
+            <MiniAsignaciones items={recentAsign} user={user} onChanged={() => { fetchRecentAsignaciones(); }} />
+          </div>
         </div>
       </div>
     </section>
@@ -482,7 +540,7 @@ function StockPage() {
             <div>
               <h1 className="text-xl font-semibold text-slate-900">Consultar Stock</h1>
               <p className="text-sm text-slate-600">
-                Disponibilidad por bodega para un SKU específico.
+                Disponibilidad por bodega para un SKU especifico.
               </p>
             </div>
           </div>
@@ -571,6 +629,7 @@ function StockPage() {
                     <th className="text-left py-2 px-4">Bodega</th>
                     <th className="text-left py-2 px-4">Stock</th>
                     <th className="text-left py-2 px-4">Estado</th>
+                    {isAdmin && <th className="text-left py-2 px-4">Acciones</th>}
                   </tr>
                 </thead>
                 <tbody>
@@ -658,15 +717,13 @@ function MapPreview({ path = [] }) {
    =========================== */
 function RutasPage() {
   const [originAddr, setOriginAddr] = useState("Santiago, Chile");
-  const [destAddr, setDestAddr] = useState("Viña del Mar, Chile");
+  const [destAddr, setDestAddr] = useState("Vina del Mar, Chile");
   const [res, setRes] = useState(null);
   const [loading, setLoading] = useState(false);
   const [err, setErr] = useState("");
 
   async function geocodeDireccion(q) {
-    const r = await fetch(`${API_BASE}/routes/geocode?q=` + encodeURIComponent(q));
-    if (!r.ok) throw new Error(`No se pudo geocodificar "${q}"`);
-    return r.json(); // { lat, lon }
+    return api(`/routes/geocode?q=` + encodeURIComponent(q)); // { lat, lon }
   }
 
   async function calcular() {
@@ -695,7 +752,7 @@ function RutasPage() {
             </svg>
           </div>
           <div>
-            <h2 className="text-xl md:text-2xl font-semibold text-slate-900">Optimización de Ruta</h2>
+            <h2 className="text-xl md:text-2xl font-semibold text-slate-900">Optimizacion de Ruta</h2>
             <p className="text-sm text-slate-500">Geocodificamos tus direcciones y calculamos el mejor trayecto.</p>
           </div>
         </div>
@@ -704,7 +761,7 @@ function RutasPage() {
           <div className="grid grid-cols-1 md:grid-cols-2 gap-5">
             <div className="rounded-xl ring-1 ring-slate-200 bg-white p-4">
               <h3 className="font-medium text-slate-800 mb-3">Origen</h3>
-              <label className="block text-sm text-slate-600 mb-1">Dirección</label>
+              <label className="block text-sm text-slate-600 mb-1">Direccion</label>
               <input
                 className="w-full rounded-xl border border-slate-300 px-3 py-2 focus:outline-none focus:ring-2 focus:ring-sky-300"
                 placeholder="Ej: Av. Libertador Bernardo O'Higgins 1111, Santiago"
@@ -715,10 +772,10 @@ function RutasPage() {
 
             <div className="rounded-xl ring-1 ring-slate-200 bg-white p-4">
               <h3 className="font-medium text-slate-800 mb-3">Destino</h3>
-              <label className="block text-sm text-slate-600 mb-1">Dirección</label>
+              <label className="block text-sm text-slate-600 mb-1">Direccion</label>
               <input
                 className="w-full rounded-xl border border-slate-300 px-3 py-2 focus:outline-none focus:ring-2 focus:ring-sky-300"
-                placeholder="Ej: 14 Norte 555, Viña del Mar"
+                placeholder="Ej: 14 Norte 555, Vina del Mar"
                 value={destAddr}
                 onChange={(e) => setDestAddr(e.target.value)}
               />
@@ -730,7 +787,7 @@ function RutasPage() {
             disabled={loading}
             className="mt-4 rounded-xl bg-sky-600 px-4 py-2 text-white hover:bg-sky-700 disabled:opacity-50"
           >
-            {loading ? "Calculando…" : "Calcular ruta"}
+            {loading ? "Calculando..." : "Calcular ruta"}
           </button>
 
           {err && <p className="mt-3 text-rose-600">{err}</p>}
@@ -747,7 +804,7 @@ function RutasPage() {
                     <div className="mt-1 text-lg font-semibold">{res.distance_km} km</div>
                   </div>
                   <div className="rounded-lg bg-slate-50 p-3">
-                    <div className="text-slate-500">Duración</div>
+                    <div className="text-slate-500">Duracion</div>
                     <div className="mt-1 text-lg font-semibold">{res.duration_hms || res.duration_min}</div>
                   </div>
                   <div className="rounded-lg bg-slate-50 p-3">
@@ -815,8 +872,8 @@ function IncidentSuccess({ resp, onReset }) {
   return (
     <div className="mt-5 rounded-2xl border bg-white shadow-sm">
       <div className="flex items-center gap-3 border-b px-4 py-3 bg-emerald-50">
-        <span className="text-emerald-600 text-xl">✅</span>
-        <h3 className="text-emerald-700 font-semibold">Incidente registrado con éxito</h3>
+        <span className="text-emerald-600 text-xs font-semibold">OK</span>
+        <h3 className="text-emerald-700 font-semibold">Incidente registrado con exito</h3>
         <div className="ml-auto">
           <button
             onClick={onReset}
@@ -827,7 +884,7 @@ function IncidentSuccess({ resp, onReset }) {
         </div>
       </div>
 
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 p-4">
+      <div className="grid grid-cols-1 lg:grid-cols-3 gap-4 p-4">
         <div className="rounded-xl border bg-white p-4">
           <dl className="text-sm space-y-2">
             <div className="grid grid-cols-3">
@@ -835,7 +892,7 @@ function IncidentSuccess({ resp, onReset }) {
               <dd className="col-span-2 font-medium">{resp.cargo_id}</dd>
             </div>
             <div className="grid grid-cols-3">
-              <dt className="text-slate-500">Vehículo</dt>
+              <dt className="text-slate-500">vehiculo</dt>
               <dd className="col-span-2 font-medium">{resp.vehicle_id}</dd>
             </div>
             <div className="grid grid-cols-3">
@@ -847,7 +904,7 @@ function IncidentSuccess({ resp, onReset }) {
               <dd className="col-span-2 font-medium">{resp.type}</dd>
             </div>
             <div className="grid grid-cols-3">
-              <dt className="text-slate-500">Descripción</dt>
+              <dt className="text-slate-500">Descripcion</dt>
               <dd className="col-span-2">{resp.description}</dd>
             </div>
             <div className="grid grid-cols-3">
@@ -856,7 +913,7 @@ function IncidentSuccess({ resp, onReset }) {
                 {resp.location?.lat?.toFixed?.(6)} / {resp.location?.lon?.toFixed?.(6)}
               </dd>
             </div>
-            <p className="mt-2 text-xs text-slate-400">Código interno: #{resp.id}</p>
+            <p className="mt-2 text-xs text-slate-400">Codigo interno: #{resp.id}</p>
           </dl>
         </div>
 
@@ -875,7 +932,7 @@ function IncidentesPage() {
   const [vehicleId, setVehicleId] = useState("CAMION-88");
   const [rut, setRut] = useState("21421299-4");
   const [tipo, setTipo] = useState(TIPOS[0]);
-  const [description, setDescription] = useState("Desvío por accidente");
+  const [description, setDescription] = useState("Desvio por accidente");
   const [address, setAddress] = useState("Santiago, Chile");
 
   const [loading, setLoading] = useState(false);
@@ -889,8 +946,9 @@ function IncidentesPage() {
   };
 
   async function geocodeDireccion(q) {
-    const r = await fetch(`${API_BASE}/routes/geocode?q=` + encodeURIComponent(q));
-    if (!r.ok) throw new Error("No se pudo geocodificar la dirección");
+    const auth = getAuth();
+    const r = await fetch(`${API_BASE}/routes/geocode?q=` + encodeURIComponent(q), { headers: auth?.access_token ? { Authorization: `Bearer ${auth.access_token}` } : {} });
+    if (!r.ok) throw new Error("No se pudo geocodificar la Direccion");
     return r.json(); // { lat, lon }
   }
 
@@ -919,14 +977,8 @@ function IncidentesPage() {
         location: { lat: loc.lat, lon: loc.lon },
       };
 
-      const r = await fetch(`${API_BASE}/incidentes/registrar`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(payload),
-      });
-      if (!r.ok) throw new Error(`HTTP ${r.status}: ${await r.text()}`);
-
-      setResp(await r.json());
+      const data = await api(`/incidentes/registrar`, { method: "POST", body: payload });
+      setResp(data);
     } catch (e) {
       setErr(e.message || "No se pudo registrar el incidente");
     } finally {
@@ -938,11 +990,11 @@ function IncidentesPage() {
     <section className="mx-auto max-w-6xl">
       <div className="rounded-2xl border bg-white shadow-sm overflow-hidden">
         <div className="flex items-center gap-3 border-b bg-slate-50/70 px-4 py-3">
-          <span className="text-slate-600 text-xl">🚨</span>
+          <span className="text-slate-600 text-xl">ðŸš¨</span>
           <div>
             <h2 className="text-xl font-semibold text-slate-900">Registrar Incidente</h2>
             <p className="text-sm text-slate-500">
-              Completa los datos del evento. Geocodificaremos la dirección automáticamente.
+              Completa los datos del evento. Geocodificaremos la Direccion automaticamente.
             </p>
           </div>
         </div>
@@ -958,12 +1010,12 @@ function IncidentesPage() {
                 onChange={(e) => setCargaIdSolo(e.target.value)}
               />
               <span className="block mt-1 text-xs text-slate-500">
-                Se enviará como <b>{normalizaIdCarga(cargaIdSolo)}</b>
+                Se enviara como <b>{normalizaIdCarga(cargaIdSolo)}</b>
               </span>
             </label>
 
             <label className="block text-sm">
-              <span className="text-slate-600">Vehículo</span>
+              <span className="text-slate-600">vehiculo</span>
               <input
                 className="mt-1 w-full rounded-xl border px-3 py-2"
                 placeholder="CAMION-88"
@@ -997,7 +1049,7 @@ function IncidentesPage() {
 
             <div className="md:col-span-2">
               <label className="block text-sm">
-                <span className="text-slate-600">Descripción</span>
+                <span className="text-slate-600">Descripcion</span>
                 <textarea
                   className="mt-1 w-full rounded-xl border px-3 py-2"
                   rows={3}
@@ -1009,7 +1061,7 @@ function IncidentesPage() {
 
             <div className="md:col-span-2">
               <label className="block text-sm">
-                <span className="text-slate-600">Dirección exacta</span>
+                <span className="text-slate-600">Direccion exacta</span>
                 <input
                   className="mt-1 w-full rounded-xl border px-3 py-2"
                   placeholder="Ej: Av. Libertador Bernardo O'Higgins 1111, Santiago"
@@ -1017,7 +1069,7 @@ function IncidentesPage() {
                   onChange={(e) => setAddress(e.target.value)}
                 />
                 <span className="block mt-1 text-xs text-slate-500">
-                  Se geocodificará a coordenadas automáticamente antes de registrar.
+                  Se geocodificara a coordenadas automaticamente antes de registrar.
                 </span>
               </label>
             </div>
@@ -1029,7 +1081,7 @@ function IncidentesPage() {
               disabled={loading}
               className="rounded-xl bg-sky-600 px-4 py-2 text-white hover:bg-sky-700 disabled:opacity-50"
             >
-              {loading ? "Registrando…" : "Registrar"}
+              {loading ? "Registrando..." : "Registrar"}
             </button>
             {err && <p className="text-rose-600 text-sm">{err}</p>}
           </div>
@@ -1042,7 +1094,7 @@ function IncidentesPage() {
 }
 
 /* ===========================
-   ASIGNACIONES (NUEVA PÁGINA)
+   ASIGNACIONES (NUEVA PAGINA)
    =========================== */
 function AsignacionesPage() {
   // Formulario
@@ -1050,7 +1102,7 @@ function AsignacionesPage() {
   const [responsableRut, setResponsableRut] = useState("21.421.299-4");
   const [vehiculoId, setVehiculoId] = useState("CAMION-12");
   const [origen, setOrigen] = useState("Bodega Central, Santiago");
-  const [destino, setDestino] = useState("Cliente XYZ, Viña del Mar");
+  const [destino, setDestino] = useState("Cliente XYZ, Vina del Mar");
   const [fechaHora, setFechaHora] = useState("");
   const [prioridad, setPrioridad] = useState("MEDIA");
   const [notas, setNotas] = useState("");
@@ -1063,6 +1115,8 @@ function AsignacionesPage() {
   // Listado
   const [items, setItems] = useState([]);
   const [loadingList, setLoadingList] = useState(false);
+  const [deletingId, setDeletingId] = useState(null);
+  const isAdmin = (getAuth()?.user?.role === 'admin');
 
   function normalizaCarga(id) {
     const t = String(id || "").trim().toUpperCase();
@@ -1114,20 +1168,36 @@ function AsignacionesPage() {
       };
 
       await api("/asignaciones", { method: "POST", body: payload });
-      setOkMsg("✅ Asignación creada correctamente.");
-      // limpiar mínimos
+      setOkMsg("OK asignacion creada correctamente.");
+      // limpiar minimos
       setNotas("");
       // refrescar listado
       fetchAsignaciones();
     } catch (e) {
-      setError(e.message || "No se pudo crear la asignación");
+      setError(e.message || "No se pudo crear la asignacion");
     } finally {
       setSubmitting(false);
     }
   }
 
+  async function eliminarAsignacion(id) {
+    if (!isAdmin) return;
+    if (!id) return;
+    if (!confirm('Eliminar esta asignacion?')) return;
+    try {
+      setDeletingId(id);
+      await api(`/asignaciones/${id}`, { method: 'DELETE' });
+      setItems((arr) => arr.filter((x) => x.id !== id));
+    } catch (e) {
+      setError(e.message || 'No se pudo eliminar');
+    } finally {
+      setDeletingId(null);
+    }
+  }
+
   return (
     <section className="mx-auto max-w-6xl">
+ 
       <div className="rounded-2xl border border-slate-200 bg-white overflow-hidden shadow-sm">
         {/* Header */}
         <div className="flex items-center gap-3 p-4 md:p-5 bg-slate-50/70">
@@ -1138,11 +1208,12 @@ function AsignacionesPage() {
           </div>
           <div>
             <h2 className="text-xl md:text-2xl font-semibold text-slate-900">Asignar carga</h2>
-            <p className="text-sm text-slate-500">Define responsable, vehículo y direcciones.</p>
+            <p className="text-sm text-slate-500">Define responsable, vehiculo y direcciones.</p>
           </div>
         </div>
 
         {/* Formulario */}
+        {getAuth()?.user?.role === 'admin' && (
         <div className="p-4 md:p-6">
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
             <label className="block text-sm">
@@ -1154,7 +1225,7 @@ function AsignacionesPage() {
                 placeholder="CARGA-1001"
               />
               <span className="block mt-1 text-xs text-slate-500">
-                Se enviará como <b>{normalizaCarga(cargoId)}</b>
+                Se enviara como <b>{normalizaCarga(cargoId)}</b>
               </span>
             </label>
 
@@ -1169,7 +1240,7 @@ function AsignacionesPage() {
             </label>
 
             <label className="block text-sm">
-              <span className="text-slate-600">Vehículo</span>
+              <span className="text-slate-600">vehiculo</span>
               <input
                 className="mt-1 w-full rounded-xl border px-3 py-2"
                 value={vehiculoId}
@@ -1208,7 +1279,7 @@ function AsignacionesPage() {
                   className="mt-1 w-full rounded-xl border px-3 py-2"
                   value={destino}
                   onChange={(e) => setDestino(e.target.value)}
-                  placeholder="Cliente XYZ, Viña del Mar"
+                  placeholder="Cliente XYZ, Vina del Mar"
                 />
               </label>
             </div>
@@ -1242,19 +1313,20 @@ function AsignacionesPage() {
               disabled={submitting}
               className="rounded-xl bg-sky-600 px-4 py-2 text-white hover:bg-sky-700 disabled:opacity-50"
             >
-              {submitting ? "Creando…" : "Crear asignación"}
+              {submitting ? "Creando..." : "Crear asignacion"}
             </button>
             {error && <p className="text-rose-600 text-sm">{error}</p>}
             {okMsg && <p className="text-emerald-600 text-sm">{okMsg}</p>}
           </div>
         </div>
+        )}
 
         {/* Listado */}
         <div className="px-4 md:px-6 pb-6">
           <h3 className="font-medium text-slate-800 mb-3">Asignaciones recientes</h3>
 
           {loadingList ? (
-            <p className="text-sm text-slate-500">Cargando…</p>
+            <p className="text-sm text-slate-500">Cargando...</p>
           ) : items.length === 0 ? (
             <p className="text-sm text-slate-500">No hay asignaciones registradas.</p>
           ) : (
@@ -1264,11 +1336,12 @@ function AsignacionesPage() {
                   <tr>
                     <th className="text-left py-2 px-4">Carga</th>
                     <th className="text-left py-2 px-4">Responsable</th>
-                    <th className="text-left py-2 px-4">Vehículo</th>
+                    <th className="text-left py-2 px-4">vehiculo</th>
                     <th className="text-left py-2 px-4">Origen</th>
                     <th className="text-left py-2 px-4">Destino</th>
                     <th className="text-left py-2 px-4">Prioridad</th>
                     <th className="text-left py-2 px-4">Estado</th>
+                    {isAdmin && <th className="text-left py-2 px-4">Acciones</th>}
                   </tr>
                 </thead>
                 <tbody>
@@ -1297,6 +1370,17 @@ function AsignacionesPage() {
                           {(a.status || a.estado || "ASIGNADA")}
                         </span>
                       </td>
+                      {isAdmin && (
+                        <td className="py-2 px-4">
+                          <button
+                            onClick={() => eliminarAsignacion(a.id)}
+                            disabled={deletingId === a.id}
+                            className="rounded-lg border px-2 py-1 text-xs hover:bg-slate-50 disabled:opacity-50"
+                          >
+                            {deletingId === a.id ? 'Eliminando...' : 'Eliminar'}
+                          </button>
+                        </td>
+                      )}
                     </tr>
                   ))}
                 </tbody>
@@ -1310,7 +1394,7 @@ function AsignacionesPage() {
 }
 
 /* ===========================
-   HISTÓRICO: INCIDENTES
+   HISTORICO: INCIDENTES
    =========================== */
 function IncidentesHistPage() {
   const [items, setItems] = useState([]);
@@ -1335,11 +1419,10 @@ function IncidentesHistPage() {
 
   async function removeItem(id) {
     if (!id) return;
-    if (!confirm("¿Eliminar este incidente?")) return;
+    if (!confirm("Eliminar este incidente?")) return;
     try {
       setDeletingId(id);
-      const r = await fetch(`${API_BASE}/incidentes/${id}`, { method: 'DELETE' });
-      if (!r.ok) throw new Error(`HTTP ${r.status}: ${await r.text()}`);
+      await api(`/incidentes/${id}`, { method: 'DELETE' });
       setItems((arr) => arr.filter((x) => x.id !== id));
     } catch (e) {
       setError(e.message || "No se pudo eliminar");
@@ -1354,11 +1437,11 @@ function IncidentesHistPage() {
         <div className="flex items-center justify-between p-4 md:p-5 bg-slate-50/70">
           <div className="flex items-center gap-3">
             <div className="grid h-10 w-10 place-items-center rounded-xl bg-white ring-1 ring-slate-200">
-              <span className="text-slate-600">🚨</span>
+              <span className="text-slate-600">ðŸš¨</span>
             </div>
             <div>
-              <h2 className="text-xl md:text-2xl font-semibold text-slate-900">Histórico de Incidentes</h2>
-              <p className="text-sm text-slate-500">Últimos registrados</p>
+              <h2 className="text-xl md:text-2xl font-semibold text-slate-900">Historico de Incidentes</h2>
+              <p className="text-sm text-slate-500">Ultimos registrados</p>
             </div>
           </div>
           <button
@@ -1366,7 +1449,7 @@ function IncidentesHistPage() {
             disabled={loading}
             className="rounded-xl border border-slate-300 bg-white px-3 py-1.5 text-sm hover:bg-slate-50 disabled:opacity-50"
           >
-            {loading ? "Actualizando…" : "Actualizar"}
+            {loading ? "Actualizando...€¦" : "Actualizar"}
           </button>
         </div>
 
@@ -1379,9 +1462,9 @@ function IncidentesHistPage() {
                   <th className="py-2 px-3">Fecha</th>
                   <th className="py-2 px-3">Tipo</th>
                   <th className="py-2 px-3">Carga</th>
-                  <th className="py-2 px-3">Vehículo</th>
+                  <th className="py-2 px-3">vehiculo</th>
                   <th className="py-2 px-3">RUT</th>
-                  <th className="py-2 px-3">Descripción</th>
+                  <th className="py-2 px-3">Descripcion</th>
                   <th className="py-2 px-3">Acciones</th>
                 </tr>
               </thead>
@@ -1400,7 +1483,7 @@ function IncidentesHistPage() {
                         disabled={deletingId === i.id}
                         className="rounded-lg border px-2 py-1 text-xs hover:bg-slate-50 disabled:opacity-50"
                       >
-                        {deletingId === i.id ? 'Eliminando…' : 'Eliminar'}
+                        {deletingId === i.id ? 'Eliminando...€¦' : 'Eliminar'}
                       </button>
                     </td>
                   </tr>
@@ -1418,7 +1501,7 @@ function IncidentesHistPage() {
 }
 
 /* ===========================
-   HISTÓRICO: RUTAS
+   HISTORICO: RUTAS
    =========================== */
 function RutasHistPage() {
   const [items, setItems] = useState([]);
@@ -1443,11 +1526,10 @@ function RutasHistPage() {
 
   async function removeItem(id) {
     if (!id) return;
-    if (!confirm("¿Eliminar esta ruta del historial?")) return;
+    if (!confirm("Eliminar esta ruta del historial?")) return;
     try {
       setDeletingId(id);
-      const r = await fetch(`${API_BASE}/routes/recent/${id}`, { method: 'DELETE' });
-      if (!r.ok) throw new Error(`HTTP ${r.status}: ${await r.text()}`);
+      await api(`/routes/recent/${id}`, { method: 'DELETE' });
       setItems((arr) => arr.filter((x) => x.id !== id));
     } catch (e) {
       setError(e.message || "No se pudo eliminar");
@@ -1465,7 +1547,7 @@ function RutasHistPage() {
               <svg width="22" height="22" viewBox="0 0 24 24" className="text-slate-600"><path fill="currentColor" d="M13 19V9l3 3l7-7l-1.5-1.5L16 9l-3-3H3v13z"/></svg>
             </div>
             <div>
-              <h2 className="text-xl md:text-2xl font-semibold text-slate-900">Histórico de Rutas</h2>
+              <h2 className="text-xl md:text-2xl font-semibold text-slate-900">Historico de Rutas</h2>
               <p className="text-sm text-slate-500">Origen y destino</p>
             </div>
           </div>
@@ -1474,7 +1556,7 @@ function RutasHistPage() {
             disabled={loading}
             className="rounded-xl border border-slate-300 bg-white px-3 py-1.5 text-sm hover:bg-slate-50 disabled:opacity-50"
           >
-            {loading ? "Actualizando…" : "Actualizar"}
+            {loading ? "Actualizando...€¦" : "Actualizar"}
           </button>
         </div>
 
@@ -1500,7 +1582,7 @@ function RutasHistPage() {
                         disabled={deletingId === r.id}
                         className="rounded-lg border px-2 py-1 text-xs hover:bg-slate-50 disabled:opacity-50"
                       >
-                        {deletingId === r.id ? 'Eliminando…' : 'Eliminar'}
+                        {deletingId === r.id ? 'Eliminando...€¦' : 'Eliminar'}
                       </button>
                     </td>
                   </tr>
@@ -1523,6 +1605,33 @@ function RutasHistPage() {
 export default function App() {
   const [user, setUser] = useState(null);
 
+  useEffect(() => {
+    const saved = getAuth();
+    if (saved?.user && saved?.access_token) {
+      setUser({ ...saved.user, access_token: saved.access_token });
+    }
+  }, []);
+
+  function handleLogout() {
+    try { localStorage.removeItem('auth'); } catch {}
+    setUser(null);
+  }
+
+  async function eliminarAsignacion(id) {
+    if (!isAdmin) return;
+    if (!id) return;
+    if (!confirm('Eliminar esta asignacion?')) return;
+    try {
+      setDeletingId(id);
+      await api(`/asignaciones/${id}`, { method: 'DELETE' });
+      setItems((arr) => arr.filter((x) => x.id !== id));
+    } catch (e) {
+      setError(e.message || 'No se pudo eliminar');
+    } finally {
+      setDeletingId(null);
+    }
+  }
+
   return (
     <BrowserRouter>
       {!user ? (
@@ -1530,11 +1639,11 @@ export default function App() {
           <Route path="*" element={<Login onLogin={setUser} />} />
         </Routes>
       ) : (
-        <Shell user={user} onLogout={() => setUser(null)}>
+        <Shell user={user} onLogout={handleLogout}>
           <Routes>
             <Route path="/" element={<Navigate to="/home" replace />} />
             <Route path="/home" element={<HomePage user={user} />} />
-            <Route path="/stock" element={<StockPage />} />
+            <Route path="/stock" element={user?.role === 'admin' ? <StockPage /> : <Navigate to="/home" replace />} />
             <Route path="/rutas" element={<RutasPage />} />
             <Route path="/incidentes" element={<IncidentesPage />} />
             <Route path="/incidentes/historial" element={<IncidentesHistPage />} />
@@ -1547,3 +1656,114 @@ export default function App() {
     </BrowserRouter>
   );
 }
+
+/* Mini dashboard: Asignaciones recientes con editar/borrar (admin) */
+function MiniAsignaciones({ items = [], user, onChanged }) {
+  const [editingId, setEditingId] = React.useState(null);
+  const [editPrioridad, setEditPrioridad] = React.useState("MEDIA");
+  const [editNotas, setEditNotas] = React.useState("");
+  const [saving, setSaving] = React.useState(false);
+  const [deletingId, setDeletingId] = React.useState(null);
+  const isAdmin = user?.role === 'admin';
+
+  function startEdit(a) {
+    setEditingId(a.id);
+    setEditPrioridad(a.prioridad || 'MEDIA');
+    setEditNotas(a.notas || '');
+  }
+
+  async function saveEdit(id) {
+    try {
+      setSaving(true);
+      await api(`/asignaciones/${id}`, { method: 'PUT', body: { prioridad: editPrioridad, notas: editNotas } });
+      setEditingId(null);
+      onChanged?.();
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  async function removeItem(id) {
+    if (!isAdmin) return;
+    if (!confirm('Eliminar esta asignacion?')) return;
+    try {
+      setDeletingId(id);
+      await api(`/asignaciones/${id}`, { method: 'DELETE' });
+      onChanged?.();
+    } finally {
+      setDeletingId(null);
+    }
+  }
+
+  return (
+    <table className="w-full text-sm">
+      <thead>
+        <tr className="text-left text-slate-500">
+          <th className="py-2 px-3">Carga</th>
+          <th className="py-2 px-3">Responsable</th>
+          <th className="py-2 px-3">Vehiculo</th>
+          <th className="py-2 px-3">Destino</th>
+          <th className="py-2 px-3">Prioridad</th>
+          <th className="py-2 px-3">Acciones</th>
+        </tr>
+      </thead>
+      <tbody>
+        {items.map((a) => (
+          <React.Fragment key={a.id}>
+            <tr className="border-t">
+              <td className="py-2 px-3">{a.cargo_id}</td>
+              <td className="py-2 px-3">{a.responsable?.rut || '-'}</td>
+              <td className="py-2 px-3">{a.vehicle_id}</td>
+              <td className="py-2 px-3">{a.destino}</td>
+              <td className="py-2 px-3">
+                <span className={`rounded-full px-2 py-0.5 text-xs ${
+                  a.prioridad === 'ALTA' ? 'bg-rose-100 text-rose-700' : a.prioridad === 'MEDIA' ? 'bg-amber-100 text-amber-700' : 'bg-slate-100 text-slate-700'
+                }`}>{a.prioridad}</span>
+              </td>
+              <td className="py-2 px-3 space-x-2">
+                {isAdmin ? (
+                  <>
+                    <button onClick={() => startEdit(a)} className="rounded-lg border px-2 py-1 text-xs hover:bg-slate-50">Editar</button>
+                    <button onClick={() => removeItem(a.id)} disabled={deletingId === a.id} className="rounded-lg border px-2 py-1 text-xs hover:bg-slate-50 disabled:opacity-50">{deletingId === a.id ? 'Eliminando...' : 'Eliminar'}</button>
+                  </>
+                ) : (
+                  <span className="text-slate-400 text-xs">-</span>
+                )}
+              </td>
+            </tr>
+            {isAdmin && editingId === a.id && (
+              <tr>
+                <td className="py-2 px-3 bg-slate-50" colSpan={6}>
+                  <div className="flex flex-col md:flex-row gap-2 md:items-end">
+                    <label className="text-xs text-slate-600">Prioridad
+                      <select className="ml-2 rounded border px-2 py-1" value={editPrioridad} onChange={(e)=>setEditPrioridad(e.target.value)}>
+                        <option value="ALTA">ALTA</option>
+                        <option value="MEDIA">MEDIA</option>
+                        <option value="BAJA">BAJA</option>
+                      </select>
+                    </label>
+                    <label className="text-xs text-slate-600 flex-1">Notas
+                      <input className="mt-1 w-full rounded border px-2 py-1" value={editNotas} onChange={(e)=>setEditNotas(e.target.value)} placeholder="Notas" />
+                    </label>
+                    <div className="ml-auto space-x-2">
+                      <button onClick={()=>setEditingId(null)} className="rounded-lg border px-3 py-1 text-xs hover:bg-slate-50">Cancelar</button>
+                      <button onClick={()=>saveEdit(a.id)} disabled={saving} className="rounded-lg bg-sky-600 text-white px-3 py-1 text-xs disabled:opacity-50">{saving ? 'Guardando…' : 'Guardar'}</button>
+                    </div>
+                  </div>
+                </td>
+              </tr>
+            )}
+          </React.Fragment>
+        ))}
+        {items.length === 0 && (
+          <tr className="border-t text-slate-500"><td className="py-2 px-3" colSpan={6}>Sin asignaciones.</td></tr>
+        )}
+      </tbody>
+    </table>
+  );
+}
+
+
+
+
+

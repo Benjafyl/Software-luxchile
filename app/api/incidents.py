@@ -1,14 +1,15 @@
 # app/api/incidents.py
-from fastapi import APIRouter, HTTPException, Query
+from fastapi import APIRouter, HTTPException, Query, Depends
 from app.models.schemas import IncidentCreate
 from app.services.incident_service import registrar_incidente
 from app.db.conn import get_db
 import sqlite3
+from app.core.security import get_current_user, require_role, AuthUser
 
 router = APIRouter()
 
 @router.post("/registrar")
-def registrar(data: IncidentCreate):
+def registrar(data: IncidentCreate, user: AuthUser = Depends(get_current_user)):
     try:
         return registrar_incidente(data)
     except Exception as e:
@@ -16,7 +17,7 @@ def registrar(data: IncidentCreate):
 
 
 @router.get("")
-def listar_recientes(limit: int = Query(5, ge=1, le=50)):
+def listar_recientes(limit: int = Query(5, ge=1, le=50), user=Depends(get_current_user)):
     """
     Lista los incidentes más recientes (limit por defecto: 5).
     """
@@ -55,7 +56,7 @@ def listar_recientes(limit: int = Query(5, ge=1, le=50)):
 
 
 @router.delete("/{incidente_id}")
-def eliminar_incidente(incidente_id: int):
+def eliminar_incidente(incidente_id: int, user=Depends(require_role("admin"))):
     """Elimina un incidente por id."""
     conn = get_db()
     cur = conn.cursor()

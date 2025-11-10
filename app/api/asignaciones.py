@@ -5,7 +5,8 @@ from datetime import datetime
 
 from app.db.database import get_db
 from app.models.asignaciones import Asignacion, Responsable
-from app.api.schemas_asignaciones import AsignacionIn, AsignacionOut, ResponsableIn
+from app.api.schemas_asignaciones import AsignacionIn, AsignacionOut, ResponsableIn, AsignacionUpdate
+from app.core.security import require_role, get_current_user, AuthUser
 
 router = APIRouter()
 
@@ -47,7 +48,11 @@ def _get_or_create_responsable(db: Session, data: ResponsableIn | None) -> Respo
     return resp
 
 @router.post("", response_model=AsignacionOut)
-def crear_asignacion_root(payload: AsignacionIn, db: Session = Depends(get_db)):
+def crear_asignacion_root(
+    payload: AsignacionIn,
+    db: Session = Depends(get_db),
+    user: AuthUser = Depends(require_role("admin")),
+):
     # Validaciones mínimas
     missing = [k for k in ("cargo_id", "vehicle_id", "origen", "destino") if not getattr(payload, k)]
     if missing:
@@ -74,6 +79,65 @@ def crear_asignacion_root(payload: AsignacionIn, db: Session = Depends(get_db)):
 def listar_asignaciones(
     limit: int = Query(10, ge=1, le=100),
     db: Session = Depends(get_db),
+    user: AuthUser = Depends(get_current_user),
 ):
-    q = db.query(Asignacion).order_by(Asignacion.id.desc()).limit(limit).all()
+    q = db.query(Asignacion)
+    if user.role == "worker":
+        # unir con Responsable para filtrar por rut del usuario
+        q = (
+            q.join(Responsable, Responsable.id == Asignacion.responsable_id)
+            .filter(Responsable.rut == (user.rut or ""))
+        )
+    q = q.order_by(Asignacion.id.desc()).limit(limit).all()
     return q
+
+
+@router.delete("/{asign_id}")
+def eliminar_asignacion(
+    asign_id: int,
+    db: Session = Depends(get_db),
+    user: AuthUser = Depends(require_role("admin")),
+):
+    asign = db.query(Asignacion).filter(Asignacion.id == asign_id).first()
+    if not asign:
+        raise HTTPException(404, "Asignación no encontrada")
+    db.delete(asign)
+    db.commit()
+    return {"deleted": True, "id": asign_id}
+
+
+@router.put("/{asign_id}", response_model=AsignacionOut)
+def actualizar_asignacion(
+    asign_id: int,
+    payload: AsignacionUpdate,
+    db: Session = Depends(get_db),
+    user: AuthUser = Depends(require_role("admin")),
+):
+    asign = db.query(Asignacion).filter(Asignacion.id == asign_id).first()
+    if not asign:
+        raise HTTPException(404, "Asignación no encontrada")
+
+    # Posible actualización de responsable
+    if payload.responsable:
+        resp = _get_or_create_responsable(db, payload.responsable)
+        asign.responsable_id = resp.id
+
+    # Actualización de campos simples si vienen presentes
+    if payload.cargo_id is not None and payload.cargo_id.strip():
+        asign.cargo_id = payload.cargo_id.strip()
+    if payload.vehicle_id is not None and payload.vehicle_id.strip():
+        asign.vehicle_id = payload.vehicle_id.strip()
+    if payload.prioridad is not None:
+        asign.prioridad = payload.prioridad
+    if payload.origen is not None and payload.origen.strip():
+        asign.origen = payload.origen.strip()
+    if payload.destino is not None and payload.destino.strip():
+        asign.destino = payload.destino.strip()
+    if payload.fecha_hora is not None:
+        asign.fecha_hora = _parse_fecha_hora(payload.fecha_hora)
+    if payload.notas is not None:
+        asign.notas = payload.notas or None
+
+    db.commit()
+    db.refresh(asign)
+    return asign

@@ -1,10 +1,11 @@
 # app/api/routes.py
-from fastapi import APIRouter, HTTPException, Query
+from fastapi import APIRouter, HTTPException, Query, Depends
 from app.models.schemas import RouteRequest
 from app.services.route_service import optimize_route
 import requests
 from app.db.conn import get_db
 import sqlite3
+from app.core.security import get_current_user, require_role
 
 router = APIRouter()
 
@@ -34,6 +35,7 @@ def optimize(
     req: RouteRequest,
     origin_text: str | None = Query(None),
     destination_text: str | None = Query(None),
+    user=Depends(get_current_user),
 ):
     """
     Calcula ruta óptima entre origen y destino (lat/lon).
@@ -77,7 +79,7 @@ def optimize(
         raise HTTPException(status_code=500, detail=str(e))
 
 @router.get("/geocode")
-def geocode(q: str = Query(..., min_length=3)):
+def geocode(q: str = Query(..., min_length=3), user=Depends(get_current_user)):
     """
     Convierte una dirección a {lat, lon} usando Nominatim (OSM) — demo.
     """
@@ -94,7 +96,7 @@ def geocode(q: str = Query(..., min_length=3)):
 
 
 @router.get("/recent")
-def recent_routes(limit: int = Query(5, ge=1, le=50)):
+def recent_routes(limit: int = Query(5, ge=1, le=50), user=Depends(get_current_user)):
     """
     Devuelve historial de rutas más recientes.
     """
@@ -117,7 +119,7 @@ def recent_routes(limit: int = Query(5, ge=1, le=50)):
 
 
 @router.delete("/recent/{item_id}")
-def delete_recent_route(item_id: int):
+def delete_recent_route(item_id: int, user=Depends(require_role("admin"))):
     """Elimina una entrada del historial de rutas."""
     conn = get_db()
     cur = conn.cursor()

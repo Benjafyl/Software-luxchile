@@ -69,3 +69,14 @@ class AsignacionOut(BaseModel):
     responsable: ResponsableOut
 
     model_config = {"from_attributes": True}
+
+
+class AsignacionUpdate(BaseModel):
+    cargo_id: Optional[str] = None
+    vehicle_id: Optional[str] = None
+    prioridad: Optional[Prioridad] = None
+    origen: Optional[str] = None
+    destino: Optional[str] = None
+    fecha_hora: Optional[str] = None  # acepta str ISO para compatibilidad
+    notas: Optional[str] = None
+    responsable: Optional[ResponsableIn] = None
