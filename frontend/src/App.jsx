@@ -58,7 +58,12 @@ async function api(path, { method = "GET", body } = {}) {
   const auth = getAuth();
   const headers = { "Content-Type": "application/json" };
   if (auth?.access_token) headers["Authorization"] = `Bearer ${auth.access_token}`;
-  const res = await fetch(`${API_BASE}${path}`, {
+  // Ensure exactly one slash between base and path
+  const base = String(API_BASE || "").replace(/\/+$/, "");
+  const p = String(path || "");
+  const fullPath = p.startsWith("/") ? p : `/${p}`;
+  const url = `${base}${fullPath}`;
+  const res = await fetch(url, {
     method,
     headers,
     body: body ? JSON.stringify(body) : undefined,
@@ -70,6 +75,11 @@ async function api(path, { method = "GET", body } = {}) {
   const isJson =
     res.headers.get("content-type")?.includes("application/json") ?? false;
   return isJson ? res.json() : res.text();
+}
+
+function formatCLP(v) {
+  const n = Number(v || 0);
+  return new Intl.NumberFormat('es-CL', { style: 'currency', currency: 'CLP', maximumFractionDigits: 0 }).format(n);
 }
 
 function formatCLP(v) {

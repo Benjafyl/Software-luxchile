@@ -42,6 +42,11 @@ npm install
 npm run dev
 ```
 
+3) Inicializar base de datos (semillas de ejemplo)
+```
+python -m app.db.init_db
+```
+
 ## Variables de entorno
 
 ### Backend
@@ -103,3 +108,8 @@ Software-luxchile/
 ## Buenas practicas de repo
 - No versionar: `.venv/`, `__pycache__/`, `*.pyc`, `frontend/node_modules/`, caches (`frontend/.vite/`), ni la base `inventario.db`.
 - Mantener `frontend/package-lock.json` para reproducibilidad del build del front.
+
+## Documentacion
+- Técnica: `docs/Documentacion_Tecnica.md`
+- Manual de Usuario: `docs/Manual_Usuario.md`
+- Repositorio y Entorno: `docs/Repositorio_y_Entorno.md`
