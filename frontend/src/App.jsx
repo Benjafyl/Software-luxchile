@@ -82,11 +82,6 @@ function formatCLP(v) {
   return new Intl.NumberFormat('es-CL', { style: 'currency', currency: 'CLP', maximumFractionDigits: 0 }).format(n);
 }
 
-function formatCLP(v) {
-  const n = Number(v || 0);
-  return new Intl.NumberFormat('es-CL', { style: 'currency', currency: 'CLP', maximumFractionDigits: 0 }).format(n);
-}
-
 function useLeafletCssOnce() {
   useMemo(() => {
     if (!document.querySelector('link[data-leaflet]')) {
