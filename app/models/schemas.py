@@ -29,9 +29,13 @@ class RouteResponse(BaseModel):
 
 # ---------- INCIDENTES ----------
 class IncidentCreate(BaseModel):
-    cargo_id: str = Field(..., example="CARGA-123")
-    vehicle_id: str = Field(..., example="CAMION-88")
-    employee_id: str = Field(..., example="RUT-12345678-9")
-    type: str = Field(..., example="DESVIO_RUTA")
-    description: Optional[str] = None
-    location: Point
+    cargo_id: str = Field(..., example="CARGA-123", description="ID de la carga. Se validará que esté asignada.")
+    vehicle_id: str = Field(..., example="CAMION-88", description="ID del vehículo")
+    employee_id: str = Field(
+        ..., 
+        example="12345678-9", 
+        description="RUT del conductor (sin puntos, con guión). Debe coincidir con el responsable asignado a la carga."
+    )
+    type: str = Field(..., example="DESVIO_RUTA", description="Tipo de incidente")
+    description: Optional[str] = Field(None, description="Descripción del incidente")
+    location: Point = Field(..., description="Ubicación GPS del incidente")

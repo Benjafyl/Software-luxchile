@@ -1,6 +1,9 @@
 # app/services/incident_service.py
 from app.db.conn import get_db
 from app.models.schemas import IncidentCreate
+from app.db.database import SessionLocal
+from app.api.asignaciones import validar_rut_conductor_en_asignacion
+from fastapi import HTTPException
 
 def _ensure_table(cur):
     # Crea la tabla si no existe (demo simple)
@@ -23,8 +26,32 @@ def _ensure_table(cur):
 
 def registrar_incidente(data: IncidentCreate) -> dict:
     """
-    Inserta un incidente y retorna el registro creado.
+    Inserta un incidente validando que el RUT del empleado 
+    corresponda al conductor asignado a esa carga.
     """
+    # Validar RUT del conductor con la asignación
+    db_sqlalchemy = SessionLocal()
+    try:
+        es_valido, mensaje = validar_rut_conductor_en_asignacion(
+            db_sqlalchemy, 
+            data.cargo_id, 
+            data.employee_id
+        )
+        
+        if not es_valido:
+            raise HTTPException(
+                status_code=403, 
+                detail={
+                    "error": "RUT_NO_AUTORIZADO",
+                    "message": mensaje,
+                    "cargo_id": data.cargo_id,
+                    "employee_id": data.employee_id
+                }
+            )
+    finally:
+        db_sqlalchemy.close()
+    
+    # Si la validación pasa, registrar el incidente
     conn = get_db()
     cur = conn.cursor()
     _ensure_table(cur)
@@ -57,5 +84,7 @@ def registrar_incidente(data: IncidentCreate) -> dict:
         "type": row["type"],
         "description": row["description"],
         "location": {"lat": row["lat"], "lon": row["lon"]},
-        "status": "ok"
+        "status": "ok",
+        "validated": True,
+        "message": "Incidente registrado correctamente. RUT validado."
     }

@@ -10,6 +10,46 @@ from app.core.security import require_role, get_current_user, AuthUser
 
 router = APIRouter()
 
+def validar_rut_conductor_en_asignacion(db: Session, cargo_id: str, employee_rut: str) -> tuple[bool, str]:
+    """
+    Valida que el RUT del empleado corresponda al responsable asignado a la carga.
+    
+    Args:
+        db: Sesión de base de datos
+        cargo_id: ID de la carga
+        employee_rut: RUT del empleado que registra el incidente
+    
+    Returns:
+        tuple[bool, str]: (es_valido, mensaje_error)
+    """
+    # Normalizar RUT
+    employee_rut = employee_rut.strip().upper()
+    
+    # Buscar asignación activa para esta carga
+    asignacion = (
+        db.query(Asignacion)
+        .join(Responsable, Responsable.id == Asignacion.responsable_id)
+        .filter(Asignacion.cargo_id == cargo_id)
+        .order_by(Asignacion.id.desc())
+        .first()
+    )
+    
+    if not asignacion:
+        return False, f"No existe asignación para la carga {cargo_id}"
+    
+    if not asignacion.responsable:
+        return False, f"La asignación {cargo_id} no tiene responsable asignado"
+    
+    # Validar que el RUT coincida
+    if asignacion.responsable.rut != employee_rut:
+        return False, (
+            f"RUT no autorizado. El conductor asignado a la carga {cargo_id} es "
+            f"{asignacion.responsable.nombre or 'N/A'} (RUT: {asignacion.responsable.rut}). "
+            f"RUT ingresado: {employee_rut}"
+        )
+    
+    return True, "RUT validado correctamente"
+
 def _parse_fecha_hora(fecha_hora: str | None):
     if not fecha_hora:
         return None
@@ -90,6 +130,34 @@ def listar_asignaciones(
         )
     q = q.order_by(Asignacion.id.desc()).limit(limit).all()
     return q
+
+
+@router.get("/cargo/{cargo_id}", response_model=AsignacionOut | None)
+def obtener_asignacion_por_carga(
+    cargo_id: str,
+    db: Session = Depends(get_db),
+    user: AuthUser = Depends(get_current_user),
+):
+    """
+    Obtiene la asignación más reciente para un cargo_id específico.
+    Útil para verificar qué conductor está asignado a una carga.
+    """
+    asignacion = (
+        db.query(Asignacion)
+        .filter(Asignacion.cargo_id == cargo_id)
+        .order_by(Asignacion.id.desc())
+        .first()
+    )
+    
+    if not asignacion:
+        raise HTTPException(404, f"No se encontró asignación para la carga {cargo_id}")
+    
+    # Si es worker, verificar que sea su asignación
+    if user.role == "worker":
+        if asignacion.responsable.rut != user.rut:
+            raise HTTPException(403, "No tienes permiso para ver esta asignación")
+    
+    return asignacion
 
 
 @router.delete("/{asign_id}")

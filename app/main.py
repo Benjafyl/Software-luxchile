@@ -22,10 +22,17 @@ app = FastAPI(
     description="API central para gestionar stock, rutas, incidentes y asignaciones de cargas."
 )
 
-# CORS para conexión con frontend local
+# CORS para conexión con frontend local y Docker
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:5173", "http://127.0.0.1:5173"],
+    allow_origins=[
+        "http://localhost:5173",
+        "http://127.0.0.1:5173",
+        "http://localhost:8000",
+        "http://127.0.0.1:8000",
+        "http://172.20.0.3:5173",  # Red interna de Docker
+        "*"  # Permitir todos los orígenes en desarrollo
+    ],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
