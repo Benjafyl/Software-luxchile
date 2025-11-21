@@ -8,6 +8,7 @@ import {
   Navigate,
   useNavigate,
 } from "react-router-dom";
+import { generateAsignacionesPDF, generateIncidentesPDF } from "./utils/pdfGenerator";
 
 /* ===========================
    LOGO CORPORATIVO
@@ -203,7 +204,7 @@ function Login({ onLogin }) {
               disabled={loading}
               className="w-full rounded-xl bg-sky-600 py-2 text-white hover:bg-sky-700 disabled:opacity-50"
             >
-              {loading ? "Ingresando...€¦" : "Ingresar"}
+              {loading ? "Ingresando...ï¿½ï¿½" : "Ingresar"}
             </button>
           </form>
         </div>
@@ -283,6 +284,11 @@ function HomePage({ user = "" }) {
   }
 
   async function fetchRecentIncidents() {
+    const auth = getAuth();
+    if (!auth?.access_token) {
+      setRecentInc([]);
+      return;
+    }
     try {
       const data = await api("/incidentes?limit=3");
       setRecentInc(Array.isArray(data) ? data : []);
@@ -292,6 +298,11 @@ function HomePage({ user = "" }) {
   }
 
   async function fetchRecentRoutes() {
+    const auth = getAuth();
+    if (!auth?.access_token) {
+      setRecentRoutes([]);
+      return;
+    }
     try {
       const data = await api("/routes/recent?limit=3");
       setRecentRoutes(Array.isArray(data) ? data : []);
@@ -302,6 +313,11 @@ function HomePage({ user = "" }) {
 
   const [recentAsign, setRecentAsign] = React.useState([]);
   async function fetchRecentAsignaciones() {
+    const auth = getAuth();
+    if (!auth?.access_token) {
+      setRecentAsign([]);
+      return;
+    }
     try {
       const data = await api("/asignaciones?limit=3");
       setRecentAsign(Array.isArray(data) ? data : []);
@@ -311,9 +327,12 @@ function HomePage({ user = "" }) {
   }
 
   React.useEffect(() => {
-    fetchRecentIncidents();
-    fetchRecentRoutes();
-    fetchRecentAsignaciones();
+    const auth = getAuth();
+    if (auth?.access_token) {
+      fetchRecentIncidents();
+      fetchRecentRoutes();
+      fetchRecentAsignaciones();
+    }
   }, []);
 
   function refresh() {
@@ -400,7 +419,7 @@ function HomePage({ user = "" }) {
         ))}
       </div>
 
-      {/* Datos críticos */}
+      {/* Datos crï¿½ticos */}
       <div className="mt-6 grid grid-cols-1 md:grid-cols-2 gap-4 max-w-4xl mx-auto">
         {/* Incidentes recientes */}
         <div className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm cursor-pointer hover:shadow-md"
@@ -721,8 +740,8 @@ function MapPreview({ path = [] }) {
    RUTAS (estilo Stock)
    =========================== */
 function RutasPage() {
-  const [originAddr, setOriginAddr] = useState("Santiago, Chile");
-  const [destAddr, setDestAddr] = useState("Vina del Mar, Chile");
+  const [originAddr, setOriginAddr] = useState("");
+  const [destAddr, setDestAddr] = useState("");
   const [res, setRes] = useState(null);
   const [loading, setLoading] = useState(false);
   const [err, setErr] = useState("");
@@ -874,15 +893,29 @@ function IncidentMap({ lat, lon }) {
 }
 
 function IncidentSuccess({ resp, onReset }) {
+  const downloadPDF = () => {
+    // Generar PDF con el incidente registrado
+    generateIncidentesPDF([resp]);
+  };
+
   return (
     <div className="mt-5 rounded-2xl border bg-white shadow-sm">
-      <div className="flex items-center gap-3 border-b px-4 py-3 bg-emerald-50">
-        <span className="text-emerald-600 text-xs font-semibold">OK</span>
-        <h3 className="text-emerald-700 font-semibold">Incidente registrado con exito</h3>
-        <div className="ml-auto">
+      <div className="border-b px-4 py-3 bg-emerald-50">
+        <div className="flex items-center gap-3 mb-3">
+          <span className="text-emerald-600 text-xs font-semibold">OK</span>
+          <h3 className="text-emerald-700 font-semibold">Incidente registrado con exito</h3>
+        </div>
+        <div className="flex flex-wrap items-center gap-2">
+          <button
+            onClick={downloadPDF}
+            className="text-sm rounded-lg bg-emerald-600 text-white px-4 py-2 hover:bg-emerald-700 flex items-center gap-2"
+          >
+            <span>ðŸ“„</span>
+            <span>Descargar PDF</span>
+          </button>
           <button
             onClick={onReset}
-            className="text-sm rounded-lg border px-3 py-1.5 hover:bg-slate-50"
+            className="text-sm rounded-lg border border-emerald-600 text-emerald-700 px-4 py-2 hover:bg-emerald-50"
           >
             Registrar otro
           </button>
@@ -933,12 +966,12 @@ function IncidentSuccess({ resp, onReset }) {
 function IncidentesPage() {
   const TIPOS = ["DESVIO_RUTA", "DETENCION_NO_PROGRAMADA", "ACCIDENTE", "ROBO", "OTRO"];
 
-  const [cargaIdSolo, setCargaIdSolo] = useState("123");
-  const [vehicleId, setVehicleId] = useState("CAMION-88");
-  const [rut, setRut] = useState("21421299-4");
+  const [cargaIdSolo, setCargaIdSolo] = useState("");
+  const [vehicleId, setVehicleId] = useState("");
+  const [rut, setRut] = useState("");
   const [tipo, setTipo] = useState(TIPOS[0]);
-  const [description, setDescription] = useState("Desvio por accidente");
-  const [address, setAddress] = useState("Santiago, Chile");
+  const [description, setDescription] = useState("");
+  const [address, setAddress] = useState("");
 
   const [loading, setLoading] = useState(false);
   const [err, setErr] = useState("");
@@ -1103,11 +1136,11 @@ function IncidentesPage() {
    =========================== */
 function AsignacionesPage() {
   // Formulario
-  const [cargoId, setCargoId] = useState("CARGA-1001");
-  const [responsableRut, setResponsableRut] = useState("21.421.299-4");
-  const [vehiculoId, setVehiculoId] = useState("CAMION-12");
-  const [origen, setOrigen] = useState("Bodega Central, Santiago");
-  const [destino, setDestino] = useState("Cliente XYZ, Vina del Mar");
+  const [cargoId, setCargoId] = useState("");
+  const [responsableRut, setResponsableRut] = useState("");
+  const [vehiculoId, setVehiculoId] = useState("");
+  const [origen, setOrigen] = useState("");
+  const [destino, setDestino] = useState("");
   const [fechaHora, setFechaHora] = useState("");
   const [prioridad, setPrioridad] = useState("MEDIA");
   const [notas, setNotas] = useState("");
@@ -1328,7 +1361,18 @@ function AsignacionesPage() {
 
         {/* Listado */}
         <div className="px-4 md:px-6 pb-6">
-          <h3 className="font-medium text-slate-800 mb-3">Asignaciones recientes</h3>
+          <div className="flex items-center justify-between mb-3">
+            <h3 className="font-medium text-slate-800">Asignaciones recientes</h3>
+            {items.length > 0 && (
+              <button
+                onClick={() => generateAsignacionesPDF(items)}
+                className="rounded-xl bg-emerald-600 px-3 py-1.5 text-sm text-white hover:bg-emerald-700 flex items-center gap-2"
+              >
+                <span>ðŸ“„</span>
+                <span>Generar PDF</span>
+              </button>
+            )}
+          </div>
 
           {loadingList ? (
             <p className="text-sm text-slate-500">Cargando...</p>
@@ -1449,13 +1493,24 @@ function IncidentesHistPage() {
               <p className="text-sm text-slate-500">Ultimos registrados</p>
             </div>
           </div>
-          <button
-            onClick={fetchAll}
-            disabled={loading}
-            className="rounded-xl border border-slate-300 bg-white px-3 py-1.5 text-sm hover:bg-slate-50 disabled:opacity-50"
-          >
-            {loading ? "Actualizando...€¦" : "Actualizar"}
-          </button>
+          <div className="flex items-center gap-2">
+            {items.length > 0 && (
+              <button
+                onClick={() => generateIncidentesPDF(items)}
+                className="rounded-xl bg-emerald-600 px-3 py-1.5 text-sm text-white hover:bg-emerald-700 flex items-center gap-2"
+              >
+                <span>ðŸ“„</span>
+                <span>PDF</span>
+              </button>
+            )}
+            <button
+              onClick={fetchAll}
+              disabled={loading}
+              className="rounded-xl border border-slate-300 bg-white px-3 py-1.5 text-sm hover:bg-slate-50 disabled:opacity-50"
+            >
+              {loading ? "Actualizando...ï¿½ï¿½" : "Actualizar"}
+            </button>
+          </div>
         </div>
 
         <div className="p-4 md:p-6">
@@ -1488,7 +1543,7 @@ function IncidentesHistPage() {
                         disabled={deletingId === i.id}
                         className="rounded-lg border px-2 py-1 text-xs hover:bg-slate-50 disabled:opacity-50"
                       >
-                        {deletingId === i.id ? 'Eliminando...€¦' : 'Eliminar'}
+                        {deletingId === i.id ? 'Eliminando...ï¿½ï¿½' : 'Eliminar'}
                       </button>
                     </td>
                   </tr>
@@ -1561,7 +1616,7 @@ function RutasHistPage() {
             disabled={loading}
             className="rounded-xl border border-slate-300 bg-white px-3 py-1.5 text-sm hover:bg-slate-50 disabled:opacity-50"
           >
-            {loading ? "Actualizando...€¦" : "Actualizar"}
+            {loading ? "Actualizando...ï¿½ï¿½" : "Actualizar"}
           </button>
         </div>
 
@@ -1587,7 +1642,7 @@ function RutasHistPage() {
                         disabled={deletingId === r.id}
                         className="rounded-lg border px-2 py-1 text-xs hover:bg-slate-50 disabled:opacity-50"
                       >
-                        {deletingId === r.id ? 'Eliminando...€¦' : 'Eliminar'}
+                        {deletingId === r.id ? 'Eliminando...ï¿½ï¿½' : 'Eliminar'}
                       </button>
                     </td>
                   </tr>
@@ -1752,7 +1807,7 @@ function MiniAsignaciones({ items = [], user, onChanged }) {
                     </label>
                     <div className="ml-auto space-x-2">
                       <button onClick={()=>setEditingId(null)} className="rounded-lg border px-3 py-1 text-xs hover:bg-slate-50">Cancelar</button>
-                      <button onClick={()=>saveEdit(a.id)} disabled={saving} className="rounded-lg bg-sky-600 text-white px-3 py-1 text-xs disabled:opacity-50">{saving ? 'Guardando…' : 'Guardar'}</button>
+                      <button onClick={()=>saveEdit(a.id)} disabled={saving} className="rounded-lg bg-sky-600 text-white px-3 py-1 text-xs disabled:opacity-50">{saving ? 'Guardandoï¿½' : 'Guardar'}</button>
                     </div>
                   </div>
                 </td>
