@@ -547,10 +547,20 @@ function HomePage({ user = "" }) {
    STOCK
    =========================== */
 function StockPage() {
+  const [activeTab, setActiveTab] = useState("listado"); // "listado" o "consultar"
+  
+  // Estado para consulta individual
   const [sku, setSku] = useState("SKU001");
   const [data, setData] = useState(null);
   const [loading, setLoading] = useState(false);
   const [err, setErr] = useState("");
+
+  // Estado para listado completo
+  const [listado, setListado] = useState([]);
+  const [stats, setStats] = useState({ total_items: 0, total_stock: 0, items_bajo_stock: 0 });
+  const [bodegas, setBodegas] = useState([]);
+  const [loadingList, setLoadingList] = useState(false);
+  const [filtros, setFiltros] = useState({ bodega: "", bajo_stock: false, search: "" });
 
   async function consultar() {
     if (!sku.trim()) return;
@@ -567,15 +577,45 @@ function StockPage() {
     }
   }
 
+  async function cargarListado() {
+    setLoadingList(true);
+    try {
+      const params = new URLSearchParams();
+      if (filtros.bodega) params.append("bodega", filtros.bodega);
+      if (filtros.bajo_stock) params.append("bajo_stock", "true");
+      if (filtros.search) params.append("search", filtros.search);
+      
+      const res = await api(`/stock/listado?${params.toString()}`);
+      setListado(res.items || []);
+      setStats({
+        total_items: res.total_items || 0,
+        total_stock: res.total_stock || 0,
+        items_bajo_stock: res.items_bajo_stock || 0
+      });
+      setBodegas(res.bodegas_disponibles || []);
+    } catch (error) {
+      console.error("Error al cargar listado:", error);
+      setListado([]);
+    } finally {
+      setLoadingList(false);
+    }
+  }
+
+  React.useEffect(() => {
+    if (activeTab === "listado") {
+      cargarListado();
+    }
+  }, [activeTab, filtros]);
+
   const totalStock = data?.inventario?.reduce((acc, r) => acc + (Number(r.stock) || 0), 0) ?? 0;
-  const bodegas = data?.inventario?.length ?? 0;
+  const bodegasCount = data?.inventario?.length ?? 0;
   const bajos = data?.inventario?.filter((r) => String(r.estado).toUpperCase() === "BAJO_STOCK").length ?? 0;
 
   return (
     <section className="min-h-[88vh] bg-slate-50 py-10">
       <div className="max-w-6xl mx-auto bg-white shadow-sm rounded-2xl border border-slate-200 overflow-hidden">
         {/* Encabezado */}
-        <div className="bg-slate-100 border-b border-slate-200 px-6 py-5 flex flex-col md:flex-row md:items-center md:justify-between gap-3">
+        <div className="bg-slate-100 border-b border-slate-200 px-6 py-5">
           <div className="flex items-center gap-3">
             <div className="bg-white p-2 rounded-xl shadow-sm border border-slate-300">
               <svg xmlns="http://www.w3.org/2000/svg" className="h-6 w-6 text-slate-700" fill="none" viewBox="0 0 24 24" stroke="currentColor">
@@ -584,127 +624,276 @@ function StockPage() {
               </svg>
             </div>
             <div>
-              <h1 className="text-xl font-semibold text-slate-900">Consultar Stock</h1>
+              <h1 className="text-xl font-semibold text-slate-900">Gestión de Stock</h1>
               <p className="text-sm text-slate-600">
-                Disponibilidad por bodega para un SKU especifico.
+                Visualiza y consulta el inventario disponible
               </p>
             </div>
           </div>
+        </div>
 
-          <div className="flex gap-2">
-            <input
-              className="rounded-lg border border-slate-300 px-3 py-2 text-slate-800 placeholder:text-slate-400 focus:outline-none focus:ring-2 focus:ring-sky-400"
-              value={sku}
-              onChange={(e) => setSku(e.target.value)}
-              placeholder="Ej: SKU001"
-            />
+        {/* Tabs */}
+        <div className="border-b border-slate-200 bg-white">
+          <div className="flex gap-4 px-6">
             <button
-              onClick={consultar}
-              disabled={loading || !sku.trim()}
-              className="rounded-lg bg-sky-600 hover:bg-sky-700 text-white px-4 py-2 font-medium disabled:opacity-50 transition-all"
+              onClick={() => setActiveTab("listado")}
+              className={`py-3 px-4 font-medium text-sm border-b-2 transition-colors ${
+                activeTab === "listado"
+                  ? "border-sky-600 text-sky-600"
+                  : "border-transparent text-slate-600 hover:text-slate-900"
+              }`}
             >
-              {loading ? "Consultando..." : "Consultar"}
+              Ver Listado Completo
+            </button>
+            <button
+              onClick={() => setActiveTab("consultar")}
+              className={`py-3 px-4 font-medium text-sm border-b-2 transition-colors ${
+                activeTab === "consultar"
+                  ? "border-sky-600 text-sky-600"
+                  : "border-transparent text-slate-600 hover:text-slate-900"
+              }`}
+            >
+              Consultar por SKU
             </button>
           </div>
         </div>
 
-        {/* KPIs */}
-        <div className="grid grid-cols-1 sm:grid-cols-3 divide-y sm:divide-y-0 sm:divide-x divide-slate-200 text-center">
-          <div className="py-4">
-            <div className="text-xs uppercase text-slate-500 font-medium">Total Stock</div>
-            <div className="text-xl font-semibold text-slate-800">{totalStock}</div>
-          </div>
-          <div className="py-4">
-            <div className="text-xs uppercase text-slate-500 font-medium">Bodegas con inventario</div>
-            <div className="text-xl font-semibold text-slate-800">{bodegas}</div>
-          </div>
-          <div className="py-4">
-            <div className="text-xs uppercase text-slate-500 font-medium">Bajo Stock</div>
-            <div className={`text-xl font-semibold ${bajos > 0 ? "text-amber-600" : "text-emerald-600"}`}>{bajos}</div>
-          </div>
-        </div>
-
-        {/* Resultados */}
-        <div className="p-6">
-          {err && (
-            <p className="text-rose-600 bg-rose-50 border border-rose-200 rounded-lg px-3 py-2 text-sm">
-              {err}
-            </p>
-          )}
-
-          {loading && (
-            <div className="flex items-center gap-2 text-slate-600 text-sm">
-              <svg className="h-5 w-5 animate-spin text-sky-400" viewBox="0 0 24 24">
-                <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" fill="none"></circle>
-                <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v4a4 4 0 00-4 4H4z"></path>
-              </svg>
-              Consultando inventario...
+        {/* Contenido según tab activa */}
+        {activeTab === "listado" ? (
+          <>
+            {/* KPIs del listado */}
+            <div className="grid grid-cols-1 sm:grid-cols-3 divide-y sm:divide-y-0 sm:divide-x divide-slate-200 text-center bg-slate-50">
+              <div className="py-4">
+                <div className="text-xs uppercase text-slate-500 font-medium">Total Items</div>
+                <div className="text-xl font-semibold text-slate-800">{stats.total_items}</div>
+              </div>
+              <div className="py-4">
+                <div className="text-xs uppercase text-slate-500 font-medium">Stock Total</div>
+                <div className="text-xl font-semibold text-slate-800">{stats.total_stock}</div>
+              </div>
+              <div className="py-4">
+                <div className="text-xs uppercase text-slate-500 font-medium">Items Bajo Stock</div>
+                <div className={`text-xl font-semibold ${stats.items_bajo_stock > 0 ? "text-amber-600" : "text-emerald-600"}`}>
+                  {stats.items_bajo_stock}
+                </div>
+              </div>
             </div>
-          )}
 
-          {data && data.inventario?.length > 0 && (
-            <div className="rounded-xl border border-slate-200 overflow-hidden mt-4">
-              <div className="flex items-center justify-between px-4 py-2 bg-slate-50 border-b border-slate-200">
-                <p className="text-sm text-slate-700">
-                  Resultado para <span className="font-semibold text-slate-900">{data.sku}</span>
-                </p>
-                <button
-                  onClick={() => {
-                    const rows = [
-                      ["Bodega", "Stock", "Estado"],
-                      ...(data.inventario || []).map((r) => [r.bodega, r.stock, r.estado]),
-                    ];
-                    const csv = rows.map((r) => r.join(",")).join("\n");
-                    const blob = new Blob(["\uFEFF" + csv], { type: "text/csv;charset=utf-8;" });
-                    const url = URL.createObjectURL(blob);
-                    const a = document.createElement("a");
-                    a.href = url;
-                    a.download = `stock_${data.sku}.csv`;
-                    a.click();
-                    URL.revokeObjectURL(url);
-                  }}
-                  className="text-sm border border-slate-300 rounded-md px-3 py-1 hover:bg-slate-100"
+            {/* Filtros */}
+            <div className="p-6 bg-white border-b border-slate-200">
+              <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
+                <input
+                  type="text"
+                  placeholder="Buscar por SKU..."
+                  value={filtros.search}
+                  onChange={(e) => setFiltros({ ...filtros, search: e.target.value })}
+                  className="rounded-lg border border-slate-300 px-3 py-2 text-sm"
+                />
+                <select
+                  value={filtros.bodega}
+                  onChange={(e) => setFiltros({ ...filtros, bodega: e.target.value })}
+                  className="rounded-lg border border-slate-300 px-3 py-2 text-sm"
                 >
-                  Exportar CSV
+                  <option value="">Todas las bodegas</option>
+                  {bodegas.map((b) => (
+                    <option key={b} value={b}>{b}</option>
+                  ))}
+                </select>
+                <label className="flex items-center gap-2 px-3">
+                  <input
+                    type="checkbox"
+                    checked={filtros.bajo_stock}
+                    onChange={(e) => setFiltros({ ...filtros, bajo_stock: e.target.checked })}
+                    className="rounded"
+                  />
+                  <span className="text-sm text-slate-700">Solo bajo stock</span>
+                </label>
+                <button
+                  onClick={() => setFiltros({ bodega: "", bajo_stock: false, search: "" })}
+                  className="rounded-lg border border-slate-300 px-3 py-2 text-sm hover:bg-slate-50"
+                >
+                  Limpiar filtros
                 </button>
               </div>
-
-              <table className="w-full text-sm">
-                <thead className="bg-slate-50 text-slate-600">
-                  <tr>
-                    <th className="text-left py-2 px-4">Bodega</th>
-                    <th className="text-left py-2 px-4">Stock</th>
-                    <th className="text-left py-2 px-4">Estado</th>
-                    {isAdmin && <th className="text-left py-2 px-4">Acciones</th>}
-                  </tr>
-                </thead>
-                <tbody>
-                  {data.inventario.map((r, i) => (
-                    <tr key={i} className="border-t hover:bg-slate-50 transition-colors">
-                      <td className="py-2 px-4">{r.bodega}</td>
-                      <td className="py-2 px-4">{r.stock}</td>
-                      <td className="py-2 px-4">
-                        <span
-                          className={`rounded-full px-2 py-0.5 text-xs font-medium ${
-                            r.estado === "BAJO_STOCK"
-                              ? "bg-amber-100 text-amber-700"
-                              : "bg-emerald-100 text-emerald-700"
-                          }`}
-                        >
-                          {r.estado}
-                        </span>
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
             </div>
-          )}
 
-          {data && !data.inventario?.length && (
-            <p className="text-slate-500 text-sm mt-3">No se encontraron bodegas para este SKU.</p>
-          )}
-        </div>
+            {/* Tabla de listado */}
+            <div className="p-6">
+              {loadingList ? (
+                <div className="flex items-center justify-center gap-2 py-8 text-slate-600">
+                  <svg className="h-5 w-5 animate-spin text-sky-400" viewBox="0 0 24 24">
+                    <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" fill="none"></circle>
+                    <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v4a4 4 0 00-4 4H4z"></path>
+                  </svg>
+                  Cargando inventario...
+                </div>
+              ) : listado.length > 0 ? (
+                <div className="rounded-xl border border-slate-200 overflow-hidden">
+                  <div className="overflow-x-auto max-h-[600px] overflow-y-auto">
+                    <table className="w-full text-sm">
+                      <thead className="bg-slate-50 text-slate-600 sticky top-0">
+                        <tr>
+                          <th className="text-left py-3 px-4">SKU</th>
+                          <th className="text-left py-3 px-4">Bodega</th>
+                          <th className="text-left py-3 px-4">Stock Actual</th>
+                          <th className="text-left py-3 px-4">Stock Mínimo</th>
+                          <th className="text-left py-3 px-4">Estado</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {listado.map((item, i) => (
+                          <tr key={i} className="border-t hover:bg-slate-50 transition-colors">
+                            <td className="py-2 px-4 font-medium text-slate-900">{item.sku}</td>
+                            <td className="py-2 px-4">{item.bodega}</td>
+                            <td className="py-2 px-4">{item.stock}</td>
+                            <td className="py-2 px-4">{item.stock_minimo}</td>
+                            <td className="py-2 px-4">
+                              <span
+                                className={`rounded-full px-2 py-0.5 text-xs font-medium ${
+                                  item.estado === "BAJO_STOCK"
+                                    ? "bg-amber-100 text-amber-700"
+                                    : "bg-emerald-100 text-emerald-700"
+                                }`}
+                              >
+                                {item.estado === "BAJO_STOCK" ? "Bajo Stock" : "OK"}
+                              </span>
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
+              ) : (
+                <p className="text-center text-slate-500 py-8">No se encontraron resultados</p>
+              )}
+            </div>
+          </>
+        ) : (
+          <>
+            {/* Vista de consulta individual */}
+            <div className="p-6 border-b border-slate-200 bg-white">
+              <div className="flex gap-2">
+                <input
+                  className="flex-1 rounded-lg border border-slate-300 px-3 py-2 text-slate-800 placeholder:text-slate-400 focus:outline-none focus:ring-2 focus:ring-sky-400"
+                  value={sku}
+                  onChange={(e) => setSku(e.target.value)}
+                  placeholder="Ingresa el SKU a consultar (Ej: SKU001)"
+                />
+                <button
+                  onClick={consultar}
+                  disabled={loading || !sku.trim()}
+                  className="rounded-lg bg-sky-600 hover:bg-sky-700 text-white px-6 py-2 font-medium disabled:opacity-50 transition-all"
+                >
+                  {loading ? "Consultando..." : "Consultar"}
+                </button>
+              </div>
+            </div>
+
+            {/* KPIs para consulta individual */}
+            {data && (
+              <div className="grid grid-cols-1 sm:grid-cols-3 divide-y sm:divide-y-0 sm:divide-x divide-slate-200 text-center bg-slate-50">
+                <div className="py-4">
+                  <div className="text-xs uppercase text-slate-500 font-medium">Total Stock</div>
+                  <div className="text-xl font-semibold text-slate-800">{totalStock}</div>
+                </div>
+                <div className="py-4">
+                  <div className="text-xs uppercase text-slate-500 font-medium">Bodegas con inventario</div>
+                  <div className="text-xl font-semibold text-slate-800">{bodegasCount}</div>
+                </div>
+                <div className="py-4">
+                  <div className="text-xs uppercase text-slate-500 font-medium">Bajo Stock</div>
+                  <div className={`text-xl font-semibold ${bajos > 0 ? "text-amber-600" : "text-emerald-600"}`}>{bajos}</div>
+                </div>
+              </div>
+            )}
+
+            {/* Resultados */}
+            <div className="p-6">
+              {err && (
+                <p className="text-rose-600 bg-rose-50 border border-rose-200 rounded-lg px-3 py-2 text-sm">
+                  {err}
+                </p>
+              )}
+
+              {loading && (
+                <div className="flex items-center justify-center gap-2 py-8 text-slate-600">
+                  <svg className="h-5 w-5 animate-spin text-sky-400" viewBox="0 0 24 24">
+                    <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" fill="none"></circle>
+                    <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v4a4 4 0 00-4 4H4z"></path>
+                  </svg>
+                  Consultando inventario...
+                </div>
+              )}
+
+              {data && data.inventario?.length > 0 && (
+                <div className="rounded-xl border border-slate-200 overflow-hidden">
+                  <div className="flex items-center justify-between px-4 py-2 bg-slate-50 border-b border-slate-200">
+                    <p className="text-sm text-slate-700">
+                      Resultado para <span className="font-semibold text-slate-900">{data.sku}</span>
+                    </p>
+                    <button
+                      onClick={() => {
+                        const rows = [
+                          ["Bodega", "Stock", "Estado"],
+                          ...(data.inventario || []).map((r) => [r.bodega, r.stock, r.estado]),
+                        ];
+                        const csv = rows.map((r) => r.join(",")).join("\n");
+                        const blob = new Blob(["\uFEFF" + csv], { type: "text/csv;charset=utf-8;" });
+                        const url = URL.createObjectURL(blob);
+                        const a = document.createElement("a");
+                        a.href = url;
+                        a.download = `stock_${data.sku}.csv`;
+                        a.click();
+                        URL.revokeObjectURL(url);
+                      }}
+                      className="text-sm border border-slate-300 rounded-md px-3 py-1 hover:bg-slate-100"
+                    >
+                      Exportar CSV
+                    </button>
+                  </div>
+
+                  <table className="w-full text-sm">
+                    <thead className="bg-slate-50 text-slate-600">
+                      <tr>
+                        <th className="text-left py-2 px-4">Bodega</th>
+                        <th className="text-left py-2 px-4">Stock</th>
+                        <th className="text-left py-2 px-4">Estado</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {data.inventario.map((r, i) => (
+                        <tr key={i} className="border-t hover:bg-slate-50 transition-colors">
+                          <td className="py-2 px-4">{r.bodega}</td>
+                          <td className="py-2 px-4">{r.stock}</td>
+                          <td className="py-2 px-4">
+                            <span
+                              className={`rounded-full px-2 py-0.5 text-xs font-medium ${
+                                r.estado === "BAJO_STOCK"
+                                  ? "bg-amber-100 text-amber-700"
+                                  : "bg-emerald-100 text-emerald-700"
+                              }`}
+                            >
+                              {r.estado === "BAJO_STOCK" ? "Bajo Stock" : "OK"}
+                            </span>
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              )}
+
+              {data && !data.inventario?.length && (
+                <p className="text-center text-slate-500 py-8">No se encontraron bodegas para este SKU.</p>
+              )}
+              
+              {!data && !loading && !err && (
+                <p className="text-center text-slate-500 py-8">Ingresa un SKU para consultar su disponibilidad</p>
+              )}
+            </div>
+          </>
+        )}
       </div>
     </section>
   );
