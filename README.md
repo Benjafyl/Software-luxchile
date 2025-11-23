@@ -14,19 +14,36 @@ LuxChile es una plataforma web (React + FastAPI) para gestionar inventario, ruta
 - Usuarios demo: `admin/admin123` y `chofer/chofer123`.
 
 ## Requisitos
+
+### Para desarrollo local
 - Python 3.11+ y Node 18+
 - Windows, macOS o Linux
 - (opcional) PowerShell para usar `start-dev.ps1`
 
+### Para Docker
+- Docker Desktop
+- Docker Compose
+
 ## Puesta en marcha
 
-### Opcion 1: Script Windows
+### Opcion 1: Docker (Recomendado)
+```powershell
+./start-docker.ps1
+```
+Construye e inicia todos los servicios en contenedores. Accede a:
+- Frontend: http://localhost:5173
+- Backend: http://localhost:8000
+- API Docs: http://localhost:8000/docs
+
+Ver documentación completa en [README.Docker.md](README.Docker.md)
+
+### Opcion 2: Script Windows (Desarrollo Local)
 ```
 ./start-dev.ps1
 ```
 Levanta backend + frontend y abre el navegador.
 
-### Opcion 2: Manual
+### Opcion 3: Manual
 1) Backend
 ```
 python -m venv .venv

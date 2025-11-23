@@ -78,16 +78,24 @@ def crear_asignacion_root(
 @router.get("", response_model=list[AsignacionOut])
 def listar_asignaciones(
     limit: int = Query(10, ge=1, le=100),
+    include_completed: bool = Query(False, description="Incluir asignaciones completadas"),
     db: Session = Depends(get_db),
     user: AuthUser = Depends(get_current_user),
 ):
     q = db.query(Asignacion)
+    
+    # Filtrar por rol
     if user.role == "worker":
         # unir con Responsable para filtrar por rut del usuario
         q = (
             q.join(Responsable, Responsable.id == Asignacion.responsable_id)
             .filter(Responsable.rut == (user.rut or ""))
         )
+    
+    # Por defecto, excluir completadas del listado reciente
+    if not include_completed:
+        q = q.filter(Asignacion.estado != "COMPLETADA")
+    
     q = q.order_by(Asignacion.id.desc()).limit(limit).all()
     return q
 
@@ -129,6 +137,8 @@ def actualizar_asignacion(
         asign.vehicle_id = payload.vehicle_id.strip()
     if payload.prioridad is not None:
         asign.prioridad = payload.prioridad
+    if payload.estado is not None:
+        asign.estado = payload.estado
     if payload.origen is not None and payload.origen.strip():
         asign.origen = payload.origen.strip()
     if payload.destino is not None and payload.destino.strip():
@@ -138,6 +148,31 @@ def actualizar_asignacion(
     if payload.notas is not None:
         asign.notas = payload.notas or None
 
+    db.commit()
+    db.refresh(asign)
+    return asign
+
+
+@router.patch("/{asign_id}/completar", response_model=AsignacionOut)
+def completar_asignacion(
+    asign_id: int,
+    db: Session = Depends(get_db),
+    user: AuthUser = Depends(get_current_user),
+):
+    """Marca una asignación como completada. Cualquier usuario puede completar su propia asignación."""
+    asign = db.query(Asignacion).filter(Asignacion.id == asign_id).first()
+    if not asign:
+        raise HTTPException(404, "Asignación no encontrada")
+    
+    # Si es worker, verificar que sea su asignación
+    if user.role == "worker":
+        if asign.responsable.rut != user.rut:
+            raise HTTPException(403, "No puedes completar asignaciones de otros usuarios")
+    
+    # Actualizar estado
+    asign.estado = "COMPLETADA"
+    asign.fecha_completada = datetime.utcnow()
+    
     db.commit()
     db.refresh(asign)
     return asign
