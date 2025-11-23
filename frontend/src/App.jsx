@@ -8,7 +8,6 @@ import {
   Navigate,
   useNavigate,
 } from "react-router-dom";
-import { generateAsignacionesPDF, generateIncidentesPDF } from "./utils/pdfGenerator";
 
 /* ===========================
    LOGO CORPORATIVO
@@ -71,6 +70,27 @@ async function api(path, { method = "GET", body } = {}) {
   });
   if (!res.ok) {
     const txt = await res.text();
+    
+    // Si es 401 y el mensaje indica token expirado o inválido, limpiar sesión
+    if (res.status === 401) {
+      try {
+        const errorData = JSON.parse(txt);
+        if (errorData.detail && (
+          errorData.detail.includes("Token expirado") || 
+          errorData.detail.includes("Token inválido") ||
+          errorData.detail.includes("No autenticado")
+        )) {
+          localStorage.removeItem("auth");
+          // Emitir evento personalizado para que App.jsx detecte el logout
+          window.dispatchEvent(new CustomEvent("auth-expired"));
+        }
+      } catch (e) {
+        // Si no se puede parsear, igual intentar limpiar en 401
+        localStorage.removeItem("auth");
+        window.dispatchEvent(new CustomEvent("auth-expired"));
+      }
+    }
+    
     throw new Error(`HTTP ${res.status}: ${txt}`);
   }
   const isJson =
@@ -261,14 +281,16 @@ function TrendSparkline({ points = [5, 8, 6, 12, 10, 14, 18] }) {
 }
 
 function HomePage({ user = "" }) {
-  // KPIs demo
+  // KPIs en tiempo real desde la base de datos
   const [kpi, setKpi] = React.useState({
-    ordersInTransit: 128,
-    weeklyIncidents: 3,
-    avgDurationMin: 54,
-    slaOK: "98.6%",
+    ordersInTransit: 0,
+    weeklyIncidents: 0,
+    avgDurationMin: 0,
+    slaOK: "N/A",
+    isRealData: false,
   });
-  const [trend, setTrend] = React.useState([7, 8, 5, 11, 9, 12, 15]);
+  const [trend, setTrend] = React.useState([]);
+  const [loading, setLoading] = React.useState(true);
   const [recentInc, setRecentInc] = React.useState([]);
   const [recentRoutes, setRecentRoutes] = React.useState([]);
   const navigate = useNavigate();
@@ -284,11 +306,6 @@ function HomePage({ user = "" }) {
   }
 
   async function fetchRecentIncidents() {
-    const auth = getAuth();
-    if (!auth?.access_token) {
-      setRecentInc([]);
-      return;
-    }
     try {
       const data = await api("/incidentes?limit=3");
       setRecentInc(Array.isArray(data) ? data : []);
@@ -298,11 +315,6 @@ function HomePage({ user = "" }) {
   }
 
   async function fetchRecentRoutes() {
-    const auth = getAuth();
-    if (!auth?.access_token) {
-      setRecentRoutes([]);
-      return;
-    }
     try {
       const data = await api("/routes/recent?limit=3");
       setRecentRoutes(Array.isArray(data) ? data : []);
@@ -313,11 +325,6 @@ function HomePage({ user = "" }) {
 
   const [recentAsign, setRecentAsign] = React.useState([]);
   async function fetchRecentAsignaciones() {
-    const auth = getAuth();
-    if (!auth?.access_token) {
-      setRecentAsign([]);
-      return;
-    }
     try {
       const data = await api("/asignaciones?limit=3");
       setRecentAsign(Array.isArray(data) ? data : []);
@@ -326,33 +333,39 @@ function HomePage({ user = "" }) {
     }
   }
 
-  React.useEffect(() => {
-    const auth = getAuth();
-    if (auth?.access_token) {
-      fetchRecentIncidents();
-      fetchRecentRoutes();
-      fetchRecentAsignaciones();
+  async function fetchDashboardKpis() {
+    try {
+      setLoading(true);
+      const data = await api("/dashboard/kpis");
+      setKpi({
+        ordersInTransit: data.ordersInTransit || 0,
+        weeklyIncidents: data.weeklyIncidents || 0,
+        avgDurationMin: data.avgDurationMin || 0,
+        slaOK: data.slaOK || "N/A",
+        isRealData: data.isRealData || false,
+      });
+      setTrend(data.trend || []);
+    } catch (err) {
+      console.error("Error al cargar KPIs:", err);
+      // En caso de error, mantener valores por defecto
+    } finally {
+      setLoading(false);
     }
+  }
+
+  React.useEffect(() => {
+    fetchRecentIncidents();
+    fetchRecentRoutes();
+    fetchRecentAsignaciones();
+    fetchDashboardKpis();
   }, []);
 
   function refresh() {
-    setKpi((k) => ({
-      ...k,
-      ordersInTransit: k.ordersInTransit + Math.round((Math.random() - 0.5) * 6),
-      weeklyIncidents: Math.max(0, k.weeklyIncidents + Math.round((Math.random() - 0.5) * 2)),
-      avgDurationMin: Math.max(20, k.avgDurationMin + Math.round((Math.random() - 0.5) * 6)),
-      slaOK: `${(97 + Math.random() * 3).toFixed(1)}%`,
-    }));
-    setTrend((t) => {
-      const nxt = [
-        ...t.slice(1),
-        Math.max(3, Math.min(18, (t.at(-1) || 10) + Math.round((Math.random() - 0.5) * 4))),
-      ];
-      return nxt;
-    });
-    // refrescamos actividad reciente tambien
+    // Recargar datos reales en lugar de simular
+    fetchDashboardKpis();
     fetchRecentIncidents();
     fetchRecentRoutes();
+    fetchRecentAsignaciones();
   }
 
   return (
@@ -366,16 +379,25 @@ function HomePage({ user = "" }) {
         />
         <div className="relative z-10 flex flex-col md:flex-row md:items-end justify-between p-4 md:p-6 bg-gradient-to-br from-white/70 to-white/40">
           <div>
-            <h2 className="text-2xl font-semibold text-slate-900">Menu principal</h2>
+            <div className="flex items-center gap-3">
+              <h2 className="text-2xl font-semibold text-slate-900">Menu principal</h2>
+              {kpi.isRealData && (
+                <span className="inline-flex items-center gap-1 px-2 py-1 rounded-full bg-green-100 text-green-700 text-xs font-medium">
+                  <span className="w-2 h-2 bg-green-500 rounded-full animate-pulse"></span>
+                  Datos en tiempo real
+                </span>
+              )}
+            </div>
             <p className="text-slate-600">
               {user ? `Hola, ${user?.full_name || user?.username || user}.` : "Bienvenido."} Que quieres hacer hoy?
             </p>
           </div>
           <button
             onClick={refresh}
-            className="mt-4 md:mt-0 rounded-xl border border-slate-300 bg-white px-4 py-2 text-sm text-slate-800 hover:bg-slate-50"
+            disabled={loading}
+            className="mt-4 md:mt-0 rounded-xl border border-slate-300 bg-white px-4 py-2 text-sm text-slate-800 hover:bg-slate-50 disabled:opacity-50 disabled:cursor-not-allowed"
           >
-            Actualizar metricas
+            {loading ? "Cargando..." : "Actualizar metricas"}
           </button>
         </div>
       </div>
@@ -740,8 +762,8 @@ function MapPreview({ path = [] }) {
    RUTAS (estilo Stock)
    =========================== */
 function RutasPage() {
-  const [originAddr, setOriginAddr] = useState("");
-  const [destAddr, setDestAddr] = useState("");
+  const [originAddr, setOriginAddr] = useState("Santiago, Chile");
+  const [destAddr, setDestAddr] = useState("Vina del Mar, Chile");
   const [res, setRes] = useState(null);
   const [loading, setLoading] = useState(false);
   const [err, setErr] = useState("");
@@ -893,29 +915,15 @@ function IncidentMap({ lat, lon }) {
 }
 
 function IncidentSuccess({ resp, onReset }) {
-  const downloadPDF = () => {
-    // Generar PDF con el incidente registrado
-    generateIncidentesPDF([resp]);
-  };
-
   return (
     <div className="mt-5 rounded-2xl border bg-white shadow-sm">
-      <div className="border-b px-4 py-3 bg-emerald-50">
-        <div className="flex items-center gap-3 mb-3">
-          <span className="text-emerald-600 text-xs font-semibold">OK</span>
-          <h3 className="text-emerald-700 font-semibold">Incidente registrado con exito</h3>
-        </div>
-        <div className="flex flex-wrap items-center gap-2">
-          <button
-            onClick={downloadPDF}
-            className="text-sm rounded-lg bg-emerald-600 text-white px-4 py-2 hover:bg-emerald-700 flex items-center gap-2"
-          >
-            <span>📄</span>
-            <span>Descargar PDF</span>
-          </button>
+      <div className="flex items-center gap-3 border-b px-4 py-3 bg-emerald-50">
+        <span className="text-emerald-600 text-xs font-semibold">OK</span>
+        <h3 className="text-emerald-700 font-semibold">Incidente registrado con exito</h3>
+        <div className="ml-auto">
           <button
             onClick={onReset}
-            className="text-sm rounded-lg border border-emerald-600 text-emerald-700 px-4 py-2 hover:bg-emerald-50"
+            className="text-sm rounded-lg border px-3 py-1.5 hover:bg-slate-50"
           >
             Registrar otro
           </button>
@@ -966,12 +974,12 @@ function IncidentSuccess({ resp, onReset }) {
 function IncidentesPage() {
   const TIPOS = ["DESVIO_RUTA", "DETENCION_NO_PROGRAMADA", "ACCIDENTE", "ROBO", "OTRO"];
 
-  const [cargaIdSolo, setCargaIdSolo] = useState("");
-  const [vehicleId, setVehicleId] = useState("");
-  const [rut, setRut] = useState("");
+  const [cargaIdSolo, setCargaIdSolo] = useState("123");
+  const [vehicleId, setVehicleId] = useState("CAMION-88");
+  const [rut, setRut] = useState("21421299-4");
   const [tipo, setTipo] = useState(TIPOS[0]);
-  const [description, setDescription] = useState("");
-  const [address, setAddress] = useState("");
+  const [description, setDescription] = useState("Desvio por accidente");
+  const [address, setAddress] = useState("Santiago, Chile");
 
   const [loading, setLoading] = useState(false);
   const [err, setErr] = useState("");
@@ -1136,11 +1144,11 @@ function IncidentesPage() {
    =========================== */
 function AsignacionesPage() {
   // Formulario
-  const [cargoId, setCargoId] = useState("");
-  const [responsableRut, setResponsableRut] = useState("");
-  const [vehiculoId, setVehiculoId] = useState("");
-  const [origen, setOrigen] = useState("");
-  const [destino, setDestino] = useState("");
+  const [cargoId, setCargoId] = useState("CARGA-1001");
+  const [responsableRut, setResponsableRut] = useState("21.421.299-4");
+  const [vehiculoId, setVehiculoId] = useState("CAMION-12");
+  const [origen, setOrigen] = useState("Bodega Central, Santiago");
+  const [destino, setDestino] = useState("Cliente XYZ, Vina del Mar");
   const [fechaHora, setFechaHora] = useState("");
   const [prioridad, setPrioridad] = useState("MEDIA");
   const [notas, setNotas] = useState("");
@@ -1154,6 +1162,7 @@ function AsignacionesPage() {
   const [items, setItems] = useState([]);
   const [loadingList, setLoadingList] = useState(false);
   const [deletingId, setDeletingId] = useState(null);
+  const [completingId, setCompletingId] = useState(null);
   const isAdmin = (getAuth()?.user?.role === 'admin');
 
   function normalizaCarga(id) {
@@ -1230,6 +1239,21 @@ function AsignacionesPage() {
       setError(e.message || 'No se pudo eliminar');
     } finally {
       setDeletingId(null);
+    }
+  }
+
+  async function completarAsignacion(id) {
+    if (!confirm('¿Marcar esta asignación como completada?')) return;
+    try {
+      setCompletingId(id);
+      await api(`/asignaciones/${id}/completar`, { method: 'PATCH' });
+      // Remover del listado ya que ahora está completada
+      setItems((arr) => arr.filter((x) => x.id !== id));
+      setOkMsg("Asignación completada exitosamente");
+    } catch (e) {
+      setError(e.message || 'No se pudo completar');
+    } finally {
+      setCompletingId(null);
     }
   }
 
@@ -1361,18 +1385,7 @@ function AsignacionesPage() {
 
         {/* Listado */}
         <div className="px-4 md:px-6 pb-6">
-          <div className="flex items-center justify-between mb-3">
-            <h3 className="font-medium text-slate-800">Asignaciones recientes</h3>
-            {items.length > 0 && (
-              <button
-                onClick={() => generateAsignacionesPDF(items)}
-                className="rounded-xl bg-emerald-600 px-3 py-1.5 text-sm text-white hover:bg-emerald-700 flex items-center gap-2"
-              >
-                <span>📄</span>
-                <span>Generar PDF</span>
-              </button>
-            )}
-          </div>
+          <h3 className="font-medium text-slate-800 mb-3">Asignaciones recientes</h3>
 
           {loadingList ? (
             <p className="text-sm text-slate-500">Cargando...</p>
@@ -1390,7 +1403,7 @@ function AsignacionesPage() {
                     <th className="text-left py-2 px-4">Destino</th>
                     <th className="text-left py-2 px-4">Prioridad</th>
                     <th className="text-left py-2 px-4">Estado</th>
-                    {isAdmin && <th className="text-left py-2 px-4">Acciones</th>}
+                    <th className="text-left py-2 px-4">Acciones</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -1419,8 +1432,18 @@ function AsignacionesPage() {
                           {(a.status || a.estado || "ASIGNADA")}
                         </span>
                       </td>
-                      {isAdmin && (
-                        <td className="py-2 px-4">
+                      <td className="py-2 px-4 space-x-2">
+                        {/* Botón Completar - disponible para todos */}
+                        <button 
+                          onClick={() => completarAsignacion(a.id)} 
+                          disabled={completingId === a.id}
+                          className="rounded-lg bg-emerald-600 text-white px-2 py-1 text-xs hover:bg-emerald-700 disabled:opacity-50"
+                        >
+                          {completingId === a.id ? 'Completando...' : '✓ Completar'}
+                        </button>
+                        
+                        {/* Botón Eliminar - solo admin */}
+                        {isAdmin && (
                           <button
                             onClick={() => eliminarAsignacion(a.id)}
                             disabled={deletingId === a.id}
@@ -1428,8 +1451,8 @@ function AsignacionesPage() {
                           >
                             {deletingId === a.id ? 'Eliminando...' : 'Eliminar'}
                           </button>
-                        </td>
-                      )}
+                        )}
+                      </td>
                     </tr>
                   ))}
                 </tbody>
@@ -1493,24 +1516,13 @@ function IncidentesHistPage() {
               <p className="text-sm text-slate-500">Ultimos registrados</p>
             </div>
           </div>
-          <div className="flex items-center gap-2">
-            {items.length > 0 && (
-              <button
-                onClick={() => generateIncidentesPDF(items)}
-                className="rounded-xl bg-emerald-600 px-3 py-1.5 text-sm text-white hover:bg-emerald-700 flex items-center gap-2"
-              >
-                <span>📄</span>
-                <span>PDF</span>
-              </button>
-            )}
-            <button
-              onClick={fetchAll}
-              disabled={loading}
-              className="rounded-xl border border-slate-300 bg-white px-3 py-1.5 text-sm hover:bg-slate-50 disabled:opacity-50"
-            >
-              {loading ? "Actualizando...��" : "Actualizar"}
-            </button>
-          </div>
+          <button
+            onClick={fetchAll}
+            disabled={loading}
+            className="rounded-xl border border-slate-300 bg-white px-3 py-1.5 text-sm hover:bg-slate-50 disabled:opacity-50"
+          >
+            {loading ? "Actualizando...��" : "Actualizar"}
+          </button>
         </div>
 
         <div className="p-4 md:p-6">
@@ -1670,6 +1682,16 @@ export default function App() {
     if (saved?.user && saved?.access_token) {
       setUser({ ...saved.user, access_token: saved.access_token });
     }
+
+    // Escuchar evento de token expirado
+    const handleAuthExpired = () => {
+      setUser(null);
+      // Opcional: mostrar notificación
+      alert('Tu sesión ha expirado. Por favor, inicia sesión nuevamente.');
+    };
+
+    window.addEventListener('auth-expired', handleAuthExpired);
+    return () => window.removeEventListener('auth-expired', handleAuthExpired);
   }, []);
 
   function handleLogout() {
@@ -1724,6 +1746,7 @@ function MiniAsignaciones({ items = [], user, onChanged }) {
   const [editNotas, setEditNotas] = React.useState("");
   const [saving, setSaving] = React.useState(false);
   const [deletingId, setDeletingId] = React.useState(null);
+  const [completingId, setCompletingId] = React.useState(null);
   const isAdmin = user?.role === 'admin';
 
   function startEdit(a) {
@@ -1755,6 +1778,19 @@ function MiniAsignaciones({ items = [], user, onChanged }) {
     }
   }
 
+  async function completar(id) {
+    if (!confirm('¿Marcar esta asignación como completada?')) return;
+    try {
+      setCompletingId(id);
+      await api(`/asignaciones/${id}/completar`, { method: 'PATCH' });
+      onChanged?.();
+    } catch (e) {
+      alert('Error al completar: ' + (e.message || 'Error desconocido'));
+    } finally {
+      setCompletingId(null);
+    }
+  }
+
   return (
     <table className="w-full text-sm">
       <thead>
@@ -1781,13 +1817,21 @@ function MiniAsignaciones({ items = [], user, onChanged }) {
                 }`}>{a.prioridad}</span>
               </td>
               <td className="py-2 px-3 space-x-2">
-                {isAdmin ? (
+                {/* Botón Completar - disponible para todos */}
+                <button 
+                  onClick={() => completar(a.id)} 
+                  disabled={completingId === a.id}
+                  className="rounded-lg bg-emerald-600 text-white px-2 py-1 text-xs hover:bg-emerald-700 disabled:opacity-50"
+                >
+                  {completingId === a.id ? 'Completando...' : '✓ Completar'}
+                </button>
+                
+                {/* Botones de administración - solo admin */}
+                {isAdmin && (
                   <>
                     <button onClick={() => startEdit(a)} className="rounded-lg border px-2 py-1 text-xs hover:bg-slate-50">Editar</button>
                     <button onClick={() => removeItem(a.id)} disabled={deletingId === a.id} className="rounded-lg border px-2 py-1 text-xs hover:bg-slate-50 disabled:opacity-50">{deletingId === a.id ? 'Eliminando...' : 'Eliminar'}</button>
                   </>
-                ) : (
-                  <span className="text-slate-400 text-xs">-</span>
                 )}
               </td>
             </tr>

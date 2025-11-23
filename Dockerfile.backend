@@ -1,33 +1,25 @@
+# Dockerfile para Backend (FastAPI)
 FROM python:3.11-slim
 
 WORKDIR /app
 
-# Instalar dependencias del sistema
-RUN apt-get update && apt-get install -y \
-    gcc \
-    libffi-dev \
-    && rm -rf /var/lib/apt/lists/*
-
 # Copiar requirements
 COPY requirements.txt .
 
-# Instalar dependencias de Python
+# Instalar dependencias
 RUN pip install --no-cache-dir -r requirements.txt
 
-# Instalar dependencias adicionales para autenticación
-RUN pip install --no-cache-dir \
-    python-jose[cryptography] \
-    passlib[bcrypt] \
-    python-multipart
+# Copiar código de la aplicación
+COPY app/ ./app/
 
-# Crear directorio para la base de datos SQLite
+# Crear directorio para la base de datos
 RUN mkdir -p /app/data
 
-# Copiar el código de la aplicación
-COPY ./app ./app
-
-# Exponer el puerto
+# Exponer puerto
 EXPOSE 8000
 
-# Comando por defecto
-CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000"]
+# Variable de entorno para la base de datos
+ENV DB_PATH=/app/data/inventario.db
+
+# Comando para ejecutar la aplicación
+CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000", "--reload"]

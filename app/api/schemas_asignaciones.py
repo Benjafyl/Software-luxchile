@@ -62,9 +62,12 @@ class AsignacionOut(BaseModel):
     cargo_id: str
     vehicle_id: str
     prioridad: Prioridad
+    estado: str = "ASIGNADA"  # ASIGNADA | EN_CURSO | COMPLETADA | CANCELADA
     origen: str
     destino: str
     fecha_hora: Optional[datetime] = None
+    fecha_creacion: Optional[datetime] = None
+    fecha_completada: Optional[datetime] = None
     notas: Optional[str] = None
     responsable: ResponsableOut
 
@@ -75,6 +78,7 @@ class AsignacionUpdate(BaseModel):
     cargo_id: Optional[str] = None
     vehicle_id: Optional[str] = None
     prioridad: Optional[Prioridad] = None
+    estado: Optional[str] = None  # ASIGNADA | EN_CURSO | COMPLETADA | CANCELADA
     origen: Optional[str] = None
     destino: Optional[str] = None
     fecha_hora: Optional[str] = None  # acepta str ISO para compatibilidad
