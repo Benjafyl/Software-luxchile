@@ -70,6 +70,27 @@ async function api(path, { method = "GET", body } = {}) {
   });
   if (!res.ok) {
     const txt = await res.text();
+    
+    // Si es 401 y el mensaje indica token expirado o invÃ¡lido, limpiar sesiÃ³n
+    if (res.status === 401) {
+      try {
+        const errorData = JSON.parse(txt);
+        if (errorData.detail && (
+          errorData.detail.includes("Token expirado") || 
+          errorData.detail.includes("Token invÃ¡lido") ||
+          errorData.detail.includes("No autenticado")
+        )) {
+          localStorage.removeItem("auth");
+          // Emitir evento personalizado para que App.jsx detecte el logout
+          window.dispatchEvent(new CustomEvent("auth-expired"));
+        }
+      } catch (e) {
+        // Si no se puede parsear, igual intentar limpiar en 401
+        localStorage.removeItem("auth");
+        window.dispatchEvent(new CustomEvent("auth-expired"));
+      }
+    }
+    
     throw new Error(`HTTP ${res.status}: ${txt}`);
   }
   const isJson =
@@ -203,7 +224,7 @@ function Login({ onLogin }) {
               disabled={loading}
               className="w-full rounded-xl bg-sky-600 py-2 text-white hover:bg-sky-700 disabled:opacity-50"
             >
-              {loading ? "Ingresando...€¦" : "Ingresar"}
+              {loading ? "Ingresando...ï¿½ï¿½" : "Ingresar"}
             </button>
           </form>
         </div>
@@ -260,14 +281,16 @@ function TrendSparkline({ points = [5, 8, 6, 12, 10, 14, 18] }) {
 }
 
 function HomePage({ user = "" }) {
-  // KPIs demo
+  // KPIs en tiempo real desde la base de datos
   const [kpi, setKpi] = React.useState({
-    ordersInTransit: 128,
-    weeklyIncidents: 3,
-    avgDurationMin: 54,
-    slaOK: "98.6%",
+    ordersInTransit: 0,
+    weeklyIncidents: 0,
+    avgDurationMin: 0,
+    slaOK: "N/A",
+    isRealData: false,
   });
-  const [trend, setTrend] = React.useState([7, 8, 5, 11, 9, 12, 15]);
+  const [trend, setTrend] = React.useState([]);
+  const [loading, setLoading] = React.useState(true);
   const [recentInc, setRecentInc] = React.useState([]);
   const [recentRoutes, setRecentRoutes] = React.useState([]);
   const navigate = useNavigate();
@@ -310,30 +333,39 @@ function HomePage({ user = "" }) {
     }
   }
 
+  async function fetchDashboardKpis() {
+    try {
+      setLoading(true);
+      const data = await api("/dashboard/kpis");
+      setKpi({
+        ordersInTransit: data.ordersInTransit || 0,
+        weeklyIncidents: data.weeklyIncidents || 0,
+        avgDurationMin: data.avgDurationMin || 0,
+        slaOK: data.slaOK || "N/A",
+        isRealData: data.isRealData || false,
+      });
+      setTrend(data.trend || []);
+    } catch (err) {
+      console.error("Error al cargar KPIs:", err);
+      // En caso de error, mantener valores por defecto
+    } finally {
+      setLoading(false);
+    }
+  }
+
   React.useEffect(() => {
     fetchRecentIncidents();
     fetchRecentRoutes();
     fetchRecentAsignaciones();
+    fetchDashboardKpis();
   }, []);
 
   function refresh() {
-    setKpi((k) => ({
-      ...k,
-      ordersInTransit: k.ordersInTransit + Math.round((Math.random() - 0.5) * 6),
-      weeklyIncidents: Math.max(0, k.weeklyIncidents + Math.round((Math.random() - 0.5) * 2)),
-      avgDurationMin: Math.max(20, k.avgDurationMin + Math.round((Math.random() - 0.5) * 6)),
-      slaOK: `${(97 + Math.random() * 3).toFixed(1)}%`,
-    }));
-    setTrend((t) => {
-      const nxt = [
-        ...t.slice(1),
-        Math.max(3, Math.min(18, (t.at(-1) || 10) + Math.round((Math.random() - 0.5) * 4))),
-      ];
-      return nxt;
-    });
-    // refrescamos actividad reciente tambien
+    // Recargar datos reales en lugar de simular
+    fetchDashboardKpis();
     fetchRecentIncidents();
     fetchRecentRoutes();
+    fetchRecentAsignaciones();
   }
 
   return (
@@ -347,16 +379,25 @@ function HomePage({ user = "" }) {
         />
         <div className="relative z-10 flex flex-col md:flex-row md:items-end justify-between p-4 md:p-6 bg-gradient-to-br from-white/70 to-white/40">
           <div>
-            <h2 className="text-2xl font-semibold text-slate-900">Menu principal</h2>
+            <div className="flex items-center gap-3">
+              <h2 className="text-2xl font-semibold text-slate-900">Menu principal</h2>
+              {kpi.isRealData && (
+                <span className="inline-flex items-center gap-1 px-2 py-1 rounded-full bg-green-100 text-green-700 text-xs font-medium">
+                  <span className="w-2 h-2 bg-green-500 rounded-full animate-pulse"></span>
+                  Datos en tiempo real
+                </span>
+              )}
+            </div>
             <p className="text-slate-600">
               {user ? `Hola, ${user?.full_name || user?.username || user}.` : "Bienvenido."} Que quieres hacer hoy?
             </p>
           </div>
           <button
             onClick={refresh}
-            className="mt-4 md:mt-0 rounded-xl border border-slate-300 bg-white px-4 py-2 text-sm text-slate-800 hover:bg-slate-50"
+            disabled={loading}
+            className="mt-4 md:mt-0 rounded-xl border border-slate-300 bg-white px-4 py-2 text-sm text-slate-800 hover:bg-slate-50 disabled:opacity-50 disabled:cursor-not-allowed"
           >
-            Actualizar metricas
+            {loading ? "Cargando..." : "Actualizar metricas"}
           </button>
         </div>
       </div>
@@ -400,7 +441,7 @@ function HomePage({ user = "" }) {
         ))}
       </div>
 
-      {/* Datos críticos */}
+      {/* Datos crï¿½ticos */}
       <div className="mt-6 grid grid-cols-1 md:grid-cols-2 gap-4 max-w-4xl mx-auto">
         {/* Incidentes recientes */}
         <div className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm cursor-pointer hover:shadow-md"
@@ -1121,6 +1162,7 @@ function AsignacionesPage() {
   const [items, setItems] = useState([]);
   const [loadingList, setLoadingList] = useState(false);
   const [deletingId, setDeletingId] = useState(null);
+  const [completingId, setCompletingId] = useState(null);
   const isAdmin = (getAuth()?.user?.role === 'admin');
 
   function normalizaCarga(id) {
@@ -1197,6 +1239,21 @@ function AsignacionesPage() {
       setError(e.message || 'No se pudo eliminar');
     } finally {
       setDeletingId(null);
+    }
+  }
+
+  async function completarAsignacion(id) {
+    if (!confirm('Â¿Marcar esta asignaciÃ³n como completada?')) return;
+    try {
+      setCompletingId(id);
+      await api(`/asignaciones/${id}/completar`, { method: 'PATCH' });
+      // Remover del listado ya que ahora estÃ¡ completada
+      setItems((arr) => arr.filter((x) => x.id !== id));
+      setOkMsg("AsignaciÃ³n completada exitosamente");
+    } catch (e) {
+      setError(e.message || 'No se pudo completar');
+    } finally {
+      setCompletingId(null);
     }
   }
 
@@ -1346,7 +1403,7 @@ function AsignacionesPage() {
                     <th className="text-left py-2 px-4">Destino</th>
                     <th className="text-left py-2 px-4">Prioridad</th>
                     <th className="text-left py-2 px-4">Estado</th>
-                    {isAdmin && <th className="text-left py-2 px-4">Acciones</th>}
+                    <th className="text-left py-2 px-4">Acciones</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -1375,8 +1432,18 @@ function AsignacionesPage() {
                           {(a.status || a.estado || "ASIGNADA")}
                         </span>
                       </td>
-                      {isAdmin && (
-                        <td className="py-2 px-4">
+                      <td className="py-2 px-4 space-x-2">
+                        {/* BotÃ³n Completar - disponible para todos */}
+                        <button 
+                          onClick={() => completarAsignacion(a.id)} 
+                          disabled={completingId === a.id}
+                          className="rounded-lg bg-emerald-600 text-white px-2 py-1 text-xs hover:bg-emerald-700 disabled:opacity-50"
+                        >
+                          {completingId === a.id ? 'Completando...' : 'âœ“ Completar'}
+                        </button>
+                        
+                        {/* BotÃ³n Eliminar - solo admin */}
+                        {isAdmin && (
                           <button
                             onClick={() => eliminarAsignacion(a.id)}
                             disabled={deletingId === a.id}
@@ -1384,8 +1451,8 @@ function AsignacionesPage() {
                           >
                             {deletingId === a.id ? 'Eliminando...' : 'Eliminar'}
                           </button>
-                        </td>
-                      )}
+                        )}
+                      </td>
                     </tr>
                   ))}
                 </tbody>
@@ -1454,7 +1521,7 @@ function IncidentesHistPage() {
             disabled={loading}
             className="rounded-xl border border-slate-300 bg-white px-3 py-1.5 text-sm hover:bg-slate-50 disabled:opacity-50"
           >
-            {loading ? "Actualizando...€¦" : "Actualizar"}
+            {loading ? "Actualizando...ï¿½ï¿½" : "Actualizar"}
           </button>
         </div>
 
@@ -1488,7 +1555,7 @@ function IncidentesHistPage() {
                         disabled={deletingId === i.id}
                         className="rounded-lg border px-2 py-1 text-xs hover:bg-slate-50 disabled:opacity-50"
                       >
-                        {deletingId === i.id ? 'Eliminando...€¦' : 'Eliminar'}
+                        {deletingId === i.id ? 'Eliminando...ï¿½ï¿½' : 'Eliminar'}
                       </button>
                     </td>
                   </tr>
@@ -1561,7 +1628,7 @@ function RutasHistPage() {
             disabled={loading}
             className="rounded-xl border border-slate-300 bg-white px-3 py-1.5 text-sm hover:bg-slate-50 disabled:opacity-50"
           >
-            {loading ? "Actualizando...€¦" : "Actualizar"}
+            {loading ? "Actualizando...ï¿½ï¿½" : "Actualizar"}
           </button>
         </div>
 
@@ -1587,7 +1654,7 @@ function RutasHistPage() {
                         disabled={deletingId === r.id}
                         className="rounded-lg border px-2 py-1 text-xs hover:bg-slate-50 disabled:opacity-50"
                       >
-                        {deletingId === r.id ? 'Eliminando...€¦' : 'Eliminar'}
+                        {deletingId === r.id ? 'Eliminando...ï¿½ï¿½' : 'Eliminar'}
                       </button>
                     </td>
                   </tr>
@@ -1615,6 +1682,16 @@ export default function App() {
     if (saved?.user && saved?.access_token) {
       setUser({ ...saved.user, access_token: saved.access_token });
     }
+
+    // Escuchar evento de token expirado
+    const handleAuthExpired = () => {
+      setUser(null);
+      // Opcional: mostrar notificaciÃ³n
+      alert('Tu sesiÃ³n ha expirado. Por favor, inicia sesiÃ³n nuevamente.');
+    };
+
+    window.addEventListener('auth-expired', handleAuthExpired);
+    return () => window.removeEventListener('auth-expired', handleAuthExpired);
   }, []);
 
   function handleLogout() {
@@ -1669,6 +1746,7 @@ function MiniAsignaciones({ items = [], user, onChanged }) {
   const [editNotas, setEditNotas] = React.useState("");
   const [saving, setSaving] = React.useState(false);
   const [deletingId, setDeletingId] = React.useState(null);
+  const [completingId, setCompletingId] = React.useState(null);
   const isAdmin = user?.role === 'admin';
 
   function startEdit(a) {
@@ -1700,6 +1778,19 @@ function MiniAsignaciones({ items = [], user, onChanged }) {
     }
   }
 
+  async function completar(id) {
+    if (!confirm('Â¿Marcar esta asignaciÃ³n como completada?')) return;
+    try {
+      setCompletingId(id);
+      await api(`/asignaciones/${id}/completar`, { method: 'PATCH' });
+      onChanged?.();
+    } catch (e) {
+      alert('Error al completar: ' + (e.message || 'Error desconocido'));
+    } finally {
+      setCompletingId(null);
+    }
+  }
+
   return (
     <table className="w-full text-sm">
       <thead>
@@ -1726,13 +1817,21 @@ function MiniAsignaciones({ items = [], user, onChanged }) {
                 }`}>{a.prioridad}</span>
               </td>
               <td className="py-2 px-3 space-x-2">
-                {isAdmin ? (
+                {/* BotÃ³n Completar - disponible para todos */}
+                <button 
+                  onClick={() => completar(a.id)} 
+                  disabled={completingId === a.id}
+                  className="rounded-lg bg-emerald-600 text-white px-2 py-1 text-xs hover:bg-emerald-700 disabled:opacity-50"
+                >
+                  {completingId === a.id ? 'Completando...' : 'âœ“ Completar'}
+                </button>
+                
+                {/* Botones de administraciÃ³n - solo admin */}
+                {isAdmin && (
                   <>
                     <button onClick={() => startEdit(a)} className="rounded-lg border px-2 py-1 text-xs hover:bg-slate-50">Editar</button>
                     <button onClick={() => removeItem(a.id)} disabled={deletingId === a.id} className="rounded-lg border px-2 py-1 text-xs hover:bg-slate-50 disabled:opacity-50">{deletingId === a.id ? 'Eliminando...' : 'Eliminar'}</button>
                   </>
-                ) : (
-                  <span className="text-slate-400 text-xs">-</span>
                 )}
               </td>
             </tr>
@@ -1752,7 +1851,7 @@ function MiniAsignaciones({ items = [], user, onChanged }) {
                     </label>
                     <div className="ml-auto space-x-2">
                       <button onClick={()=>setEditingId(null)} className="rounded-lg border px-3 py-1 text-xs hover:bg-slate-50">Cancelar</button>
-                      <button onClick={()=>saveEdit(a.id)} disabled={saving} className="rounded-lg bg-sky-600 text-white px-3 py-1 text-xs disabled:opacity-50">{saving ? 'Guardando…' : 'Guardar'}</button>
+                      <button onClick={()=>saveEdit(a.id)} disabled={saving} className="rounded-lg bg-sky-600 text-white px-3 py-1 text-xs disabled:opacity-50">{saving ? 'Guardandoï¿½' : 'Guardar'}</button>
                     </div>
                   </div>
                 </td>
