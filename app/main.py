@@ -8,6 +8,7 @@ from app.api.routes import router as routes_router
 from app.api.incidents import router as incidents_router
 from app.api import asignaciones as asignaciones_router
 from app.api.auth import router as auth_router
+from app.api.dashboard import router as dashboard_router
 
 # Base de datos
 from app.db.database import engine, Base, SessionLocal
@@ -26,11 +27,9 @@ app = FastAPI(
 app.add_middleware(
     CORSMiddleware,
     allow_origins=[
-        "http://localhost:5173",
+        "http://localhost:5173", 
         "http://127.0.0.1:5173",
-        "http://localhost:8000",
-        "http://127.0.0.1:8000",
-        "http://172.20.0.3:5173",  # Red interna de Docker
+        "http://frontend:5173",  # Docker network
         "*"  # Permitir todos los orígenes en desarrollo
     ],
     allow_credentials=True,
@@ -57,6 +56,7 @@ app.include_router(routes_router, prefix="/routes", tags=["routes"])
 app.include_router(incidents_router, prefix="/incidentes", tags=["incidentes"])
 app.include_router(asignaciones_router.router, prefix="/asignaciones", tags=["asignaciones"])
 app.include_router(auth_router, prefix="/auth", tags=["auth"])
+app.include_router(dashboard_router, prefix="/dashboard", tags=["dashboard"])
 
 
 # Endpoint raíz

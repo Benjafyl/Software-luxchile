@@ -11,46 +11,6 @@ from app.core.security import require_role, get_current_user, AuthUser
 
 router = APIRouter()
 
-def validar_rut_conductor_en_asignacion(db: Session, cargo_id: str, employee_rut: str) -> tuple[bool, str]:
-    """
-    Valida que el RUT del empleado corresponda al responsable asignado a la carga.
-    
-    Args:
-        db: Sesión de base de datos
-        cargo_id: ID de la carga
-        employee_rut: RUT del empleado que registra el incidente
-    
-    Returns:
-        tuple[bool, str]: (es_valido, mensaje_error)
-    """
-    # Normalizar RUT
-    employee_rut = employee_rut.strip().upper()
-    
-    # Buscar asignación activa para esta carga
-    asignacion = (
-        db.query(Asignacion)
-        .join(Responsable, Responsable.id == Asignacion.responsable_id)
-        .filter(Asignacion.cargo_id == cargo_id)
-        .order_by(Asignacion.id.desc())
-        .first()
-    )
-    
-    if not asignacion:
-        return False, f"No existe asignación para la carga {cargo_id}"
-    
-    if not asignacion.responsable:
-        return False, f"La asignación {cargo_id} no tiene responsable asignado"
-    
-    # Validar que el RUT coincida
-    if asignacion.responsable.rut != employee_rut:
-        return False, (
-            f"RUT no autorizado. El conductor asignado a la carga {cargo_id} es "
-            f"{asignacion.responsable.nombre or 'N/A'} (RUT: {asignacion.responsable.rut}). "
-            f"RUT ingresado: {employee_rut}"
-        )
-    
-    return True, "RUT validado correctamente"
-
 def _parse_fecha_hora(fecha_hora: str | None):
     if not fecha_hora:
         return None
@@ -132,46 +92,26 @@ def crear_asignacion_root(
 @router.get("", response_model=list[AsignacionOut])
 def listar_asignaciones(
     limit: int = Query(10, ge=1, le=100),
+    include_completed: bool = Query(False, description="Incluir asignaciones completadas"),
     db: Session = Depends(get_db),
     user: AuthUser = Depends(get_current_user),
 ):
     q = db.query(Asignacion)
+    
+    # Filtrar por rol
     if user.role == "worker":
         # unir con Responsable para filtrar por rut del usuario
         q = (
             q.join(Responsable, Responsable.id == Asignacion.responsable_id)
             .filter(Responsable.rut == (user.rut or ""))
         )
+    
+    # Por defecto, excluir completadas del listado reciente
+    if not include_completed:
+        q = q.filter(Asignacion.estado != "COMPLETADA")
+    
     q = q.order_by(Asignacion.id.desc()).limit(limit).all()
     return q
-
-
-@router.get("/cargo/{cargo_id}", response_model=AsignacionOut | None)
-def obtener_asignacion_por_carga(
-    cargo_id: str,
-    db: Session = Depends(get_db),
-    user: AuthUser = Depends(get_current_user),
-):
-    """
-    Obtiene la asignación más reciente para un cargo_id específico.
-    Útil para verificar qué conductor está asignado a una carga.
-    """
-    asignacion = (
-        db.query(Asignacion)
-        .filter(Asignacion.cargo_id == cargo_id)
-        .order_by(Asignacion.id.desc())
-        .first()
-    )
-    
-    if not asignacion:
-        raise HTTPException(404, f"No se encontró asignación para la carga {cargo_id}")
-    
-    # Si es worker, verificar que sea su asignación
-    if user.role == "worker":
-        if asignacion.responsable.rut != user.rut:
-            raise HTTPException(403, "No tienes permiso para ver esta asignación")
-    
-    return asignacion
 
 
 @router.delete("/{asign_id}")
@@ -211,6 +151,8 @@ def actualizar_asignacion(
         asign.vehicle_id = payload.vehicle_id.strip()
     if payload.prioridad is not None:
         asign.prioridad = payload.prioridad
+    if payload.estado is not None:
+        asign.estado = payload.estado
     if payload.origen is not None and payload.origen.strip():
         asign.origen = payload.origen.strip()
     if payload.destino is not None and payload.destino.strip():
@@ -220,6 +162,31 @@ def actualizar_asignacion(
     if payload.notas is not None:
         asign.notas = payload.notas or None
 
+    db.commit()
+    db.refresh(asign)
+    return asign
+
+
+@router.patch("/{asign_id}/completar", response_model=AsignacionOut)
+def completar_asignacion(
+    asign_id: int,
+    db: Session = Depends(get_db),
+    user: AuthUser = Depends(get_current_user),
+):
+    """Marca una asignación como completada. Cualquier usuario puede completar su propia asignación."""
+    asign = db.query(Asignacion).filter(Asignacion.id == asign_id).first()
+    if not asign:
+        raise HTTPException(404, "Asignación no encontrada")
+    
+    # Si es worker, verificar que sea su asignación
+    if user.role == "worker":
+        if asign.responsable.rut != user.rut:
+            raise HTTPException(403, "No puedes completar asignaciones de otros usuarios")
+    
+    # Actualizar estado
+    asign.estado = "COMPLETADA"
+    asign.fecha_completada = datetime.utcnow()
+    
     db.commit()
     db.refresh(asign)
     return asign

@@ -8,7 +8,6 @@ import {
   Navigate,
   useNavigate,
 } from "react-router-dom";
-import { generateAsignacionesPDF, generateIncidentesPDF } from "./utils/pdfGenerator";
 
 /* ===========================
    LOGO CORPORATIVO
@@ -71,6 +70,27 @@ async function api(path, { method = "GET", body } = {}) {
   });
   if (!res.ok) {
     const txt = await res.text();
+    
+    // Si es 401 y el mensaje indica token expirado o inválido, limpiar sesión
+    if (res.status === 401) {
+      try {
+        const errorData = JSON.parse(txt);
+        if (errorData.detail && (
+          errorData.detail.includes("Token expirado") || 
+          errorData.detail.includes("Token inválido") ||
+          errorData.detail.includes("No autenticado")
+        )) {
+          localStorage.removeItem("auth");
+          // Emitir evento personalizado para que App.jsx detecte el logout
+          window.dispatchEvent(new CustomEvent("auth-expired"));
+        }
+      } catch (e) {
+        // Si no se puede parsear, igual intentar limpiar en 401
+        localStorage.removeItem("auth");
+        window.dispatchEvent(new CustomEvent("auth-expired"));
+      }
+    }
+    
     throw new Error(`HTTP ${res.status}: ${txt}`);
   }
   const isJson =
@@ -261,14 +281,16 @@ function TrendSparkline({ points = [5, 8, 6, 12, 10, 14, 18] }) {
 }
 
 function HomePage({ user = "" }) {
-  // KPIs demo
+  // KPIs en tiempo real desde la base de datos
   const [kpi, setKpi] = React.useState({
-    ordersInTransit: 128,
-    weeklyIncidents: 3,
-    avgDurationMin: 54,
-    slaOK: "98.6%",
+    ordersInTransit: 0,
+    weeklyIncidents: 0,
+    avgDurationMin: 0,
+    slaOK: "N/A",
+    isRealData: false,
   });
-  const [trend, setTrend] = React.useState([7, 8, 5, 11, 9, 12, 15]);
+  const [trend, setTrend] = React.useState([]);
+  const [loading, setLoading] = React.useState(true);
   const [recentInc, setRecentInc] = React.useState([]);
   const [recentRoutes, setRecentRoutes] = React.useState([]);
   const navigate = useNavigate();
@@ -284,11 +306,6 @@ function HomePage({ user = "" }) {
   }
 
   async function fetchRecentIncidents() {
-    const auth = getAuth();
-    if (!auth?.access_token) {
-      setRecentInc([]);
-      return;
-    }
     try {
       const data = await api("/incidentes?limit=3");
       setRecentInc(Array.isArray(data) ? data : []);
@@ -298,11 +315,6 @@ function HomePage({ user = "" }) {
   }
 
   async function fetchRecentRoutes() {
-    const auth = getAuth();
-    if (!auth?.access_token) {
-      setRecentRoutes([]);
-      return;
-    }
     try {
       const data = await api("/routes/recent?limit=3");
       setRecentRoutes(Array.isArray(data) ? data : []);
@@ -313,11 +325,6 @@ function HomePage({ user = "" }) {
 
   const [recentAsign, setRecentAsign] = React.useState([]);
   async function fetchRecentAsignaciones() {
-    const auth = getAuth();
-    if (!auth?.access_token) {
-      setRecentAsign([]);
-      return;
-    }
     try {
       const data = await api("/asignaciones?limit=3");
       setRecentAsign(Array.isArray(data) ? data : []);
@@ -326,33 +333,39 @@ function HomePage({ user = "" }) {
     }
   }
 
-  React.useEffect(() => {
-    const auth = getAuth();
-    if (auth?.access_token) {
-      fetchRecentIncidents();
-      fetchRecentRoutes();
-      fetchRecentAsignaciones();
+  async function fetchDashboardKpis() {
+    try {
+      setLoading(true);
+      const data = await api("/dashboard/kpis");
+      setKpi({
+        ordersInTransit: data.ordersInTransit || 0,
+        weeklyIncidents: data.weeklyIncidents || 0,
+        avgDurationMin: data.avgDurationMin || 0,
+        slaOK: data.slaOK || "N/A",
+        isRealData: data.isRealData || false,
+      });
+      setTrend(data.trend || []);
+    } catch (err) {
+      console.error("Error al cargar KPIs:", err);
+      // En caso de error, mantener valores por defecto
+    } finally {
+      setLoading(false);
     }
+  }
+
+  React.useEffect(() => {
+    fetchRecentIncidents();
+    fetchRecentRoutes();
+    fetchRecentAsignaciones();
+    fetchDashboardKpis();
   }, []);
 
   function refresh() {
-    setKpi((k) => ({
-      ...k,
-      ordersInTransit: k.ordersInTransit + Math.round((Math.random() - 0.5) * 6),
-      weeklyIncidents: Math.max(0, k.weeklyIncidents + Math.round((Math.random() - 0.5) * 2)),
-      avgDurationMin: Math.max(20, k.avgDurationMin + Math.round((Math.random() - 0.5) * 6)),
-      slaOK: `${(97 + Math.random() * 3).toFixed(1)}%`,
-    }));
-    setTrend((t) => {
-      const nxt = [
-        ...t.slice(1),
-        Math.max(3, Math.min(18, (t.at(-1) || 10) + Math.round((Math.random() - 0.5) * 4))),
-      ];
-      return nxt;
-    });
-    // refrescamos actividad reciente tambien
+    // Recargar datos reales en lugar de simular
+    fetchDashboardKpis();
     fetchRecentIncidents();
     fetchRecentRoutes();
+    fetchRecentAsignaciones();
   }
 
   return (
@@ -366,16 +379,25 @@ function HomePage({ user = "" }) {
         />
         <div className="relative z-10 flex flex-col md:flex-row md:items-end justify-between p-4 md:p-6 bg-gradient-to-br from-white/70 to-white/40">
           <div>
-            <h2 className="text-2xl font-semibold text-slate-900">Menu principal</h2>
+            <div className="flex items-center gap-3">
+              <h2 className="text-2xl font-semibold text-slate-900">Menu principal</h2>
+              {kpi.isRealData && (
+                <span className="inline-flex items-center gap-1 px-2 py-1 rounded-full bg-green-100 text-green-700 text-xs font-medium">
+                  <span className="w-2 h-2 bg-green-500 rounded-full animate-pulse"></span>
+                  Datos en tiempo real
+                </span>
+              )}
+            </div>
             <p className="text-slate-600">
               {user ? `Hola, ${user?.full_name || user?.username || user}.` : "Bienvenido."} Que quieres hacer hoy?
             </p>
           </div>
           <button
             onClick={refresh}
-            className="mt-4 md:mt-0 rounded-xl border border-slate-300 bg-white px-4 py-2 text-sm text-slate-800 hover:bg-slate-50"
+            disabled={loading}
+            className="mt-4 md:mt-0 rounded-xl border border-slate-300 bg-white px-4 py-2 text-sm text-slate-800 hover:bg-slate-50 disabled:opacity-50 disabled:cursor-not-allowed"
           >
-            Actualizar metricas
+            {loading ? "Cargando..." : "Actualizar metricas"}
           </button>
         </div>
       </div>
@@ -525,10 +547,20 @@ function HomePage({ user = "" }) {
    STOCK
    =========================== */
 function StockPage() {
+  const [activeTab, setActiveTab] = useState("listado"); // "listado" o "consultar"
+  
+  // Estado para consulta individual
   const [sku, setSku] = useState("SKU001");
   const [data, setData] = useState(null);
   const [loading, setLoading] = useState(false);
   const [err, setErr] = useState("");
+
+  // Estado para listado completo
+  const [listado, setListado] = useState([]);
+  const [stats, setStats] = useState({ total_items: 0, total_stock: 0, items_bajo_stock: 0 });
+  const [bodegas, setBodegas] = useState([]);
+  const [loadingList, setLoadingList] = useState(false);
+  const [filtros, setFiltros] = useState({ bodega: "", bajo_stock: false, search: "" });
 
   async function consultar() {
     if (!sku.trim()) return;
@@ -545,15 +577,45 @@ function StockPage() {
     }
   }
 
+  async function cargarListado() {
+    setLoadingList(true);
+    try {
+      const params = new URLSearchParams();
+      if (filtros.bodega) params.append("bodega", filtros.bodega);
+      if (filtros.bajo_stock) params.append("bajo_stock", "true");
+      if (filtros.search) params.append("search", filtros.search);
+      
+      const res = await api(`/stock/listado?${params.toString()}`);
+      setListado(res.items || []);
+      setStats({
+        total_items: res.total_items || 0,
+        total_stock: res.total_stock || 0,
+        items_bajo_stock: res.items_bajo_stock || 0
+      });
+      setBodegas(res.bodegas_disponibles || []);
+    } catch (error) {
+      console.error("Error al cargar listado:", error);
+      setListado([]);
+    } finally {
+      setLoadingList(false);
+    }
+  }
+
+  React.useEffect(() => {
+    if (activeTab === "listado") {
+      cargarListado();
+    }
+  }, [activeTab, filtros]);
+
   const totalStock = data?.inventario?.reduce((acc, r) => acc + (Number(r.stock) || 0), 0) ?? 0;
-  const bodegas = data?.inventario?.length ?? 0;
+  const bodegasCount = data?.inventario?.length ?? 0;
   const bajos = data?.inventario?.filter((r) => String(r.estado).toUpperCase() === "BAJO_STOCK").length ?? 0;
 
   return (
     <section className="min-h-[88vh] bg-slate-50 py-10">
       <div className="max-w-6xl mx-auto bg-white shadow-sm rounded-2xl border border-slate-200 overflow-hidden">
         {/* Encabezado */}
-        <div className="bg-slate-100 border-b border-slate-200 px-6 py-5 flex flex-col md:flex-row md:items-center md:justify-between gap-3">
+        <div className="bg-slate-100 border-b border-slate-200 px-6 py-5">
           <div className="flex items-center gap-3">
             <div className="bg-white p-2 rounded-xl shadow-sm border border-slate-300">
               <svg xmlns="http://www.w3.org/2000/svg" className="h-6 w-6 text-slate-700" fill="none" viewBox="0 0 24 24" stroke="currentColor">
@@ -562,127 +624,276 @@ function StockPage() {
               </svg>
             </div>
             <div>
-              <h1 className="text-xl font-semibold text-slate-900">Consultar Stock</h1>
+              <h1 className="text-xl font-semibold text-slate-900">Gestión de Stock</h1>
               <p className="text-sm text-slate-600">
-                Disponibilidad por bodega para un SKU especifico.
+                Visualiza y consulta el inventario disponible
               </p>
             </div>
           </div>
+        </div>
 
-          <div className="flex gap-2">
-            <input
-              className="rounded-lg border border-slate-300 px-3 py-2 text-slate-800 placeholder:text-slate-400 focus:outline-none focus:ring-2 focus:ring-sky-400"
-              value={sku}
-              onChange={(e) => setSku(e.target.value)}
-              placeholder="Ej: SKU001"
-            />
+        {/* Tabs */}
+        <div className="border-b border-slate-200 bg-white">
+          <div className="flex gap-4 px-6">
             <button
-              onClick={consultar}
-              disabled={loading || !sku.trim()}
-              className="rounded-lg bg-sky-600 hover:bg-sky-700 text-white px-4 py-2 font-medium disabled:opacity-50 transition-all"
+              onClick={() => setActiveTab("listado")}
+              className={`py-3 px-4 font-medium text-sm border-b-2 transition-colors ${
+                activeTab === "listado"
+                  ? "border-sky-600 text-sky-600"
+                  : "border-transparent text-slate-600 hover:text-slate-900"
+              }`}
             >
-              {loading ? "Consultando..." : "Consultar"}
+              Ver Listado Completo
+            </button>
+            <button
+              onClick={() => setActiveTab("consultar")}
+              className={`py-3 px-4 font-medium text-sm border-b-2 transition-colors ${
+                activeTab === "consultar"
+                  ? "border-sky-600 text-sky-600"
+                  : "border-transparent text-slate-600 hover:text-slate-900"
+              }`}
+            >
+              Consultar por SKU
             </button>
           </div>
         </div>
 
-        {/* KPIs */}
-        <div className="grid grid-cols-1 sm:grid-cols-3 divide-y sm:divide-y-0 sm:divide-x divide-slate-200 text-center">
-          <div className="py-4">
-            <div className="text-xs uppercase text-slate-500 font-medium">Total Stock</div>
-            <div className="text-xl font-semibold text-slate-800">{totalStock}</div>
-          </div>
-          <div className="py-4">
-            <div className="text-xs uppercase text-slate-500 font-medium">Bodegas con inventario</div>
-            <div className="text-xl font-semibold text-slate-800">{bodegas}</div>
-          </div>
-          <div className="py-4">
-            <div className="text-xs uppercase text-slate-500 font-medium">Bajo Stock</div>
-            <div className={`text-xl font-semibold ${bajos > 0 ? "text-amber-600" : "text-emerald-600"}`}>{bajos}</div>
-          </div>
-        </div>
-
-        {/* Resultados */}
-        <div className="p-6">
-          {err && (
-            <p className="text-rose-600 bg-rose-50 border border-rose-200 rounded-lg px-3 py-2 text-sm">
-              {err}
-            </p>
-          )}
-
-          {loading && (
-            <div className="flex items-center gap-2 text-slate-600 text-sm">
-              <svg className="h-5 w-5 animate-spin text-sky-400" viewBox="0 0 24 24">
-                <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" fill="none"></circle>
-                <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v4a4 4 0 00-4 4H4z"></path>
-              </svg>
-              Consultando inventario...
+        {/* Contenido según tab activa */}
+        {activeTab === "listado" ? (
+          <>
+            {/* KPIs del listado */}
+            <div className="grid grid-cols-1 sm:grid-cols-3 divide-y sm:divide-y-0 sm:divide-x divide-slate-200 text-center bg-slate-50">
+              <div className="py-4">
+                <div className="text-xs uppercase text-slate-500 font-medium">Total Items</div>
+                <div className="text-xl font-semibold text-slate-800">{stats.total_items}</div>
+              </div>
+              <div className="py-4">
+                <div className="text-xs uppercase text-slate-500 font-medium">Stock Total</div>
+                <div className="text-xl font-semibold text-slate-800">{stats.total_stock}</div>
+              </div>
+              <div className="py-4">
+                <div className="text-xs uppercase text-slate-500 font-medium">Items Bajo Stock</div>
+                <div className={`text-xl font-semibold ${stats.items_bajo_stock > 0 ? "text-amber-600" : "text-emerald-600"}`}>
+                  {stats.items_bajo_stock}
+                </div>
+              </div>
             </div>
-          )}
 
-          {data && data.inventario?.length > 0 && (
-            <div className="rounded-xl border border-slate-200 overflow-hidden mt-4">
-              <div className="flex items-center justify-between px-4 py-2 bg-slate-50 border-b border-slate-200">
-                <p className="text-sm text-slate-700">
-                  Resultado para <span className="font-semibold text-slate-900">{data.sku}</span>
-                </p>
-                <button
-                  onClick={() => {
-                    const rows = [
-                      ["Bodega", "Stock", "Estado"],
-                      ...(data.inventario || []).map((r) => [r.bodega, r.stock, r.estado]),
-                    ];
-                    const csv = rows.map((r) => r.join(",")).join("\n");
-                    const blob = new Blob(["\uFEFF" + csv], { type: "text/csv;charset=utf-8;" });
-                    const url = URL.createObjectURL(blob);
-                    const a = document.createElement("a");
-                    a.href = url;
-                    a.download = `stock_${data.sku}.csv`;
-                    a.click();
-                    URL.revokeObjectURL(url);
-                  }}
-                  className="text-sm border border-slate-300 rounded-md px-3 py-1 hover:bg-slate-100"
+            {/* Filtros */}
+            <div className="p-6 bg-white border-b border-slate-200">
+              <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
+                <input
+                  type="text"
+                  placeholder="Buscar por SKU..."
+                  value={filtros.search}
+                  onChange={(e) => setFiltros({ ...filtros, search: e.target.value })}
+                  className="rounded-lg border border-slate-300 px-3 py-2 text-sm"
+                />
+                <select
+                  value={filtros.bodega}
+                  onChange={(e) => setFiltros({ ...filtros, bodega: e.target.value })}
+                  className="rounded-lg border border-slate-300 px-3 py-2 text-sm"
                 >
-                  Exportar CSV
+                  <option value="">Todas las bodegas</option>
+                  {bodegas.map((b) => (
+                    <option key={b} value={b}>{b}</option>
+                  ))}
+                </select>
+                <label className="flex items-center gap-2 px-3">
+                  <input
+                    type="checkbox"
+                    checked={filtros.bajo_stock}
+                    onChange={(e) => setFiltros({ ...filtros, bajo_stock: e.target.checked })}
+                    className="rounded"
+                  />
+                  <span className="text-sm text-slate-700">Solo bajo stock</span>
+                </label>
+                <button
+                  onClick={() => setFiltros({ bodega: "", bajo_stock: false, search: "" })}
+                  className="rounded-lg border border-slate-300 px-3 py-2 text-sm hover:bg-slate-50"
+                >
+                  Limpiar filtros
                 </button>
               </div>
-
-              <table className="w-full text-sm">
-                <thead className="bg-slate-50 text-slate-600">
-                  <tr>
-                    <th className="text-left py-2 px-4">Bodega</th>
-                    <th className="text-left py-2 px-4">Stock</th>
-                    <th className="text-left py-2 px-4">Estado</th>
-                    {isAdmin && <th className="text-left py-2 px-4">Acciones</th>}
-                  </tr>
-                </thead>
-                <tbody>
-                  {data.inventario.map((r, i) => (
-                    <tr key={i} className="border-t hover:bg-slate-50 transition-colors">
-                      <td className="py-2 px-4">{r.bodega}</td>
-                      <td className="py-2 px-4">{r.stock}</td>
-                      <td className="py-2 px-4">
-                        <span
-                          className={`rounded-full px-2 py-0.5 text-xs font-medium ${
-                            r.estado === "BAJO_STOCK"
-                              ? "bg-amber-100 text-amber-700"
-                              : "bg-emerald-100 text-emerald-700"
-                          }`}
-                        >
-                          {r.estado}
-                        </span>
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
             </div>
-          )}
 
-          {data && !data.inventario?.length && (
-            <p className="text-slate-500 text-sm mt-3">No se encontraron bodegas para este SKU.</p>
-          )}
-        </div>
+            {/* Tabla de listado */}
+            <div className="p-6">
+              {loadingList ? (
+                <div className="flex items-center justify-center gap-2 py-8 text-slate-600">
+                  <svg className="h-5 w-5 animate-spin text-sky-400" viewBox="0 0 24 24">
+                    <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" fill="none"></circle>
+                    <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v4a4 4 0 00-4 4H4z"></path>
+                  </svg>
+                  Cargando inventario...
+                </div>
+              ) : listado.length > 0 ? (
+                <div className="rounded-xl border border-slate-200 overflow-hidden">
+                  <div className="overflow-x-auto max-h-[600px] overflow-y-auto">
+                    <table className="w-full text-sm">
+                      <thead className="bg-slate-50 text-slate-600 sticky top-0">
+                        <tr>
+                          <th className="text-left py-3 px-4">SKU</th>
+                          <th className="text-left py-3 px-4">Bodega</th>
+                          <th className="text-left py-3 px-4">Stock Actual</th>
+                          <th className="text-left py-3 px-4">Stock Mínimo</th>
+                          <th className="text-left py-3 px-4">Estado</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {listado.map((item, i) => (
+                          <tr key={i} className="border-t hover:bg-slate-50 transition-colors">
+                            <td className="py-2 px-4 font-medium text-slate-900">{item.sku}</td>
+                            <td className="py-2 px-4">{item.bodega}</td>
+                            <td className="py-2 px-4">{item.stock}</td>
+                            <td className="py-2 px-4">{item.stock_minimo}</td>
+                            <td className="py-2 px-4">
+                              <span
+                                className={`rounded-full px-2 py-0.5 text-xs font-medium ${
+                                  item.estado === "BAJO_STOCK"
+                                    ? "bg-amber-100 text-amber-700"
+                                    : "bg-emerald-100 text-emerald-700"
+                                }`}
+                              >
+                                {item.estado === "BAJO_STOCK" ? "Bajo Stock" : "OK"}
+                              </span>
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
+              ) : (
+                <p className="text-center text-slate-500 py-8">No se encontraron resultados</p>
+              )}
+            </div>
+          </>
+        ) : (
+          <>
+            {/* Vista de consulta individual */}
+            <div className="p-6 border-b border-slate-200 bg-white">
+              <div className="flex gap-2">
+                <input
+                  className="flex-1 rounded-lg border border-slate-300 px-3 py-2 text-slate-800 placeholder:text-slate-400 focus:outline-none focus:ring-2 focus:ring-sky-400"
+                  value={sku}
+                  onChange={(e) => setSku(e.target.value)}
+                  placeholder="Ingresa el SKU a consultar (Ej: SKU001)"
+                />
+                <button
+                  onClick={consultar}
+                  disabled={loading || !sku.trim()}
+                  className="rounded-lg bg-sky-600 hover:bg-sky-700 text-white px-6 py-2 font-medium disabled:opacity-50 transition-all"
+                >
+                  {loading ? "Consultando..." : "Consultar"}
+                </button>
+              </div>
+            </div>
+
+            {/* KPIs para consulta individual */}
+            {data && (
+              <div className="grid grid-cols-1 sm:grid-cols-3 divide-y sm:divide-y-0 sm:divide-x divide-slate-200 text-center bg-slate-50">
+                <div className="py-4">
+                  <div className="text-xs uppercase text-slate-500 font-medium">Total Stock</div>
+                  <div className="text-xl font-semibold text-slate-800">{totalStock}</div>
+                </div>
+                <div className="py-4">
+                  <div className="text-xs uppercase text-slate-500 font-medium">Bodegas con inventario</div>
+                  <div className="text-xl font-semibold text-slate-800">{bodegasCount}</div>
+                </div>
+                <div className="py-4">
+                  <div className="text-xs uppercase text-slate-500 font-medium">Bajo Stock</div>
+                  <div className={`text-xl font-semibold ${bajos > 0 ? "text-amber-600" : "text-emerald-600"}`}>{bajos}</div>
+                </div>
+              </div>
+            )}
+
+            {/* Resultados */}
+            <div className="p-6">
+              {err && (
+                <p className="text-rose-600 bg-rose-50 border border-rose-200 rounded-lg px-3 py-2 text-sm">
+                  {err}
+                </p>
+              )}
+
+              {loading && (
+                <div className="flex items-center justify-center gap-2 py-8 text-slate-600">
+                  <svg className="h-5 w-5 animate-spin text-sky-400" viewBox="0 0 24 24">
+                    <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" fill="none"></circle>
+                    <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v4a4 4 0 00-4 4H4z"></path>
+                  </svg>
+                  Consultando inventario...
+                </div>
+              )}
+
+              {data && data.inventario?.length > 0 && (
+                <div className="rounded-xl border border-slate-200 overflow-hidden">
+                  <div className="flex items-center justify-between px-4 py-2 bg-slate-50 border-b border-slate-200">
+                    <p className="text-sm text-slate-700">
+                      Resultado para <span className="font-semibold text-slate-900">{data.sku}</span>
+                    </p>
+                    <button
+                      onClick={() => {
+                        const rows = [
+                          ["Bodega", "Stock", "Estado"],
+                          ...(data.inventario || []).map((r) => [r.bodega, r.stock, r.estado]),
+                        ];
+                        const csv = rows.map((r) => r.join(",")).join("\n");
+                        const blob = new Blob(["\uFEFF" + csv], { type: "text/csv;charset=utf-8;" });
+                        const url = URL.createObjectURL(blob);
+                        const a = document.createElement("a");
+                        a.href = url;
+                        a.download = `stock_${data.sku}.csv`;
+                        a.click();
+                        URL.revokeObjectURL(url);
+                      }}
+                      className="text-sm border border-slate-300 rounded-md px-3 py-1 hover:bg-slate-100"
+                    >
+                      Exportar CSV
+                    </button>
+                  </div>
+
+                  <table className="w-full text-sm">
+                    <thead className="bg-slate-50 text-slate-600">
+                      <tr>
+                        <th className="text-left py-2 px-4">Bodega</th>
+                        <th className="text-left py-2 px-4">Stock</th>
+                        <th className="text-left py-2 px-4">Estado</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {data.inventario.map((r, i) => (
+                        <tr key={i} className="border-t hover:bg-slate-50 transition-colors">
+                          <td className="py-2 px-4">{r.bodega}</td>
+                          <td className="py-2 px-4">{r.stock}</td>
+                          <td className="py-2 px-4">
+                            <span
+                              className={`rounded-full px-2 py-0.5 text-xs font-medium ${
+                                r.estado === "BAJO_STOCK"
+                                  ? "bg-amber-100 text-amber-700"
+                                  : "bg-emerald-100 text-emerald-700"
+                              }`}
+                            >
+                              {r.estado === "BAJO_STOCK" ? "Bajo Stock" : "OK"}
+                            </span>
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              )}
+
+              {data && !data.inventario?.length && (
+                <p className="text-center text-slate-500 py-8">No se encontraron bodegas para este SKU.</p>
+              )}
+              
+              {!data && !loading && !err && (
+                <p className="text-center text-slate-500 py-8">Ingresa un SKU para consultar su disponibilidad</p>
+              )}
+            </div>
+          </>
+        )}
       </div>
     </section>
   );
@@ -740,8 +951,8 @@ function MapPreview({ path = [] }) {
    RUTAS (estilo Stock)
    =========================== */
 function RutasPage() {
-  const [originAddr, setOriginAddr] = useState("");
-  const [destAddr, setDestAddr] = useState("");
+  const [originAddr, setOriginAddr] = useState("Santiago, Chile");
+  const [destAddr, setDestAddr] = useState("Vina del Mar, Chile");
   const [res, setRes] = useState(null);
   const [loading, setLoading] = useState(false);
   const [err, setErr] = useState("");
@@ -893,29 +1104,15 @@ function IncidentMap({ lat, lon }) {
 }
 
 function IncidentSuccess({ resp, onReset }) {
-  const downloadPDF = () => {
-    // Generar PDF con el incidente registrado
-    generateIncidentesPDF([resp]);
-  };
-
   return (
     <div className="mt-5 rounded-2xl border bg-white shadow-sm">
-      <div className="border-b px-4 py-3 bg-emerald-50">
-        <div className="flex items-center gap-3 mb-3">
-          <span className="text-emerald-600 text-xs font-semibold">OK</span>
-          <h3 className="text-emerald-700 font-semibold">Incidente registrado con exito</h3>
-        </div>
-        <div className="flex flex-wrap items-center gap-2">
-          <button
-            onClick={downloadPDF}
-            className="text-sm rounded-lg bg-emerald-600 text-white px-4 py-2 hover:bg-emerald-700 flex items-center gap-2"
-          >
-            <span>📄</span>
-            <span>Descargar PDF</span>
-          </button>
+      <div className="flex items-center gap-3 border-b px-4 py-3 bg-emerald-50">
+        <span className="text-emerald-600 text-xs font-semibold">OK</span>
+        <h3 className="text-emerald-700 font-semibold">Incidente registrado con exito</h3>
+        <div className="ml-auto">
           <button
             onClick={onReset}
-            className="text-sm rounded-lg border border-emerald-600 text-emerald-700 px-4 py-2 hover:bg-emerald-50"
+            className="text-sm rounded-lg border px-3 py-1.5 hover:bg-slate-50"
           >
             Registrar otro
           </button>
@@ -966,12 +1163,12 @@ function IncidentSuccess({ resp, onReset }) {
 function IncidentesPage() {
   const TIPOS = ["DESVIO_RUTA", "DETENCION_NO_PROGRAMADA", "ACCIDENTE", "ROBO", "OTRO"];
 
-  const [cargaIdSolo, setCargaIdSolo] = useState("");
-  const [vehicleId, setVehicleId] = useState("");
-  const [rut, setRut] = useState("");
+  const [cargaIdSolo, setCargaIdSolo] = useState("123");
+  const [vehicleId, setVehicleId] = useState("CAMION-88");
+  const [rut, setRut] = useState("21421299-4");
   const [tipo, setTipo] = useState(TIPOS[0]);
-  const [description, setDescription] = useState("");
-  const [address, setAddress] = useState("");
+  const [description, setDescription] = useState("Desvio por accidente");
+  const [address, setAddress] = useState("Santiago, Chile");
 
   const [loading, setLoading] = useState(false);
   const [err, setErr] = useState("");
@@ -1136,11 +1333,11 @@ function IncidentesPage() {
    =========================== */
 function AsignacionesPage() {
   // Formulario
-  const [cargoId, setCargoId] = useState("");
-  const [responsableRut, setResponsableRut] = useState("");
-  const [vehiculoId, setVehiculoId] = useState("");
-  const [origen, setOrigen] = useState("");
-  const [destino, setDestino] = useState("");
+  const [cargoId, setCargoId] = useState("CARGA-1001");
+  const [responsableRut, setResponsableRut] = useState("21.421.299-4");
+  const [vehiculoId, setVehiculoId] = useState("CAMION-12");
+  const [origen, setOrigen] = useState("Bodega Central, Santiago");
+  const [destino, setDestino] = useState("Cliente XYZ, Vina del Mar");
   const [fechaHora, setFechaHora] = useState("");
   const [prioridad, setPrioridad] = useState("MEDIA");
   const [notas, setNotas] = useState("");
@@ -1154,6 +1351,7 @@ function AsignacionesPage() {
   const [items, setItems] = useState([]);
   const [loadingList, setLoadingList] = useState(false);
   const [deletingId, setDeletingId] = useState(null);
+  const [completingId, setCompletingId] = useState(null);
   const isAdmin = (getAuth()?.user?.role === 'admin');
 
   function normalizaCarga(id) {
@@ -1230,6 +1428,21 @@ function AsignacionesPage() {
       setError(e.message || 'No se pudo eliminar');
     } finally {
       setDeletingId(null);
+    }
+  }
+
+  async function completarAsignacion(id) {
+    if (!confirm('¿Marcar esta asignación como completada?')) return;
+    try {
+      setCompletingId(id);
+      await api(`/asignaciones/${id}/completar`, { method: 'PATCH' });
+      // Remover del listado ya que ahora está completada
+      setItems((arr) => arr.filter((x) => x.id !== id));
+      setOkMsg("Asignación completada exitosamente");
+    } catch (e) {
+      setError(e.message || 'No se pudo completar');
+    } finally {
+      setCompletingId(null);
     }
   }
 
@@ -1361,18 +1574,7 @@ function AsignacionesPage() {
 
         {/* Listado */}
         <div className="px-4 md:px-6 pb-6">
-          <div className="flex items-center justify-between mb-3">
-            <h3 className="font-medium text-slate-800">Asignaciones recientes</h3>
-            {items.length > 0 && (
-              <button
-                onClick={() => generateAsignacionesPDF(items)}
-                className="rounded-xl bg-emerald-600 px-3 py-1.5 text-sm text-white hover:bg-emerald-700 flex items-center gap-2"
-              >
-                <span>📄</span>
-                <span>Generar PDF</span>
-              </button>
-            )}
-          </div>
+          <h3 className="font-medium text-slate-800 mb-3">Asignaciones recientes</h3>
 
           {loadingList ? (
             <p className="text-sm text-slate-500">Cargando...</p>
@@ -1390,7 +1592,7 @@ function AsignacionesPage() {
                     <th className="text-left py-2 px-4">Destino</th>
                     <th className="text-left py-2 px-4">Prioridad</th>
                     <th className="text-left py-2 px-4">Estado</th>
-                    {isAdmin && <th className="text-left py-2 px-4">Acciones</th>}
+                    <th className="text-left py-2 px-4">Acciones</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -1419,8 +1621,18 @@ function AsignacionesPage() {
                           {(a.status || a.estado || "ASIGNADA")}
                         </span>
                       </td>
-                      {isAdmin && (
-                        <td className="py-2 px-4">
+                      <td className="py-2 px-4 space-x-2">
+                        {/* Botón Completar - disponible para todos */}
+                        <button 
+                          onClick={() => completarAsignacion(a.id)} 
+                          disabled={completingId === a.id}
+                          className="rounded-lg bg-emerald-600 text-white px-2 py-1 text-xs hover:bg-emerald-700 disabled:opacity-50"
+                        >
+                          {completingId === a.id ? 'Completando...' : '✓ Completar'}
+                        </button>
+                        
+                        {/* Botón Eliminar - solo admin */}
+                        {isAdmin && (
                           <button
                             onClick={() => eliminarAsignacion(a.id)}
                             disabled={deletingId === a.id}
@@ -1428,8 +1640,8 @@ function AsignacionesPage() {
                           >
                             {deletingId === a.id ? 'Eliminando...' : 'Eliminar'}
                           </button>
-                        </td>
-                      )}
+                        )}
+                      </td>
                     </tr>
                   ))}
                 </tbody>
@@ -1493,24 +1705,13 @@ function IncidentesHistPage() {
               <p className="text-sm text-slate-500">Ultimos registrados</p>
             </div>
           </div>
-          <div className="flex items-center gap-2">
-            {items.length > 0 && (
-              <button
-                onClick={() => generateIncidentesPDF(items)}
-                className="rounded-xl bg-emerald-600 px-3 py-1.5 text-sm text-white hover:bg-emerald-700 flex items-center gap-2"
-              >
-                <span>📄</span>
-                <span>PDF</span>
-              </button>
-            )}
-            <button
-              onClick={fetchAll}
-              disabled={loading}
-              className="rounded-xl border border-slate-300 bg-white px-3 py-1.5 text-sm hover:bg-slate-50 disabled:opacity-50"
-            >
-              {loading ? "Actualizando...��" : "Actualizar"}
-            </button>
-          </div>
+          <button
+            onClick={fetchAll}
+            disabled={loading}
+            className="rounded-xl border border-slate-300 bg-white px-3 py-1.5 text-sm hover:bg-slate-50 disabled:opacity-50"
+          >
+            {loading ? "Actualizando...��" : "Actualizar"}
+          </button>
         </div>
 
         <div className="p-4 md:p-6">
@@ -1670,6 +1871,16 @@ export default function App() {
     if (saved?.user && saved?.access_token) {
       setUser({ ...saved.user, access_token: saved.access_token });
     }
+
+    // Escuchar evento de token expirado
+    const handleAuthExpired = () => {
+      setUser(null);
+      // Opcional: mostrar notificación
+      alert('Tu sesión ha expirado. Por favor, inicia sesión nuevamente.');
+    };
+
+    window.addEventListener('auth-expired', handleAuthExpired);
+    return () => window.removeEventListener('auth-expired', handleAuthExpired);
   }, []);
 
   function handleLogout() {
@@ -1724,6 +1935,7 @@ function MiniAsignaciones({ items = [], user, onChanged }) {
   const [editNotas, setEditNotas] = React.useState("");
   const [saving, setSaving] = React.useState(false);
   const [deletingId, setDeletingId] = React.useState(null);
+  const [completingId, setCompletingId] = React.useState(null);
   const isAdmin = user?.role === 'admin';
 
   function startEdit(a) {
@@ -1755,6 +1967,19 @@ function MiniAsignaciones({ items = [], user, onChanged }) {
     }
   }
 
+  async function completar(id) {
+    if (!confirm('¿Marcar esta asignación como completada?')) return;
+    try {
+      setCompletingId(id);
+      await api(`/asignaciones/${id}/completar`, { method: 'PATCH' });
+      onChanged?.();
+    } catch (e) {
+      alert('Error al completar: ' + (e.message || 'Error desconocido'));
+    } finally {
+      setCompletingId(null);
+    }
+  }
+
   return (
     <table className="w-full text-sm">
       <thead>
@@ -1781,13 +2006,21 @@ function MiniAsignaciones({ items = [], user, onChanged }) {
                 }`}>{a.prioridad}</span>
               </td>
               <td className="py-2 px-3 space-x-2">
-                {isAdmin ? (
+                {/* Botón Completar - disponible para todos */}
+                <button 
+                  onClick={() => completar(a.id)} 
+                  disabled={completingId === a.id}
+                  className="rounded-lg bg-emerald-600 text-white px-2 py-1 text-xs hover:bg-emerald-700 disabled:opacity-50"
+                >
+                  {completingId === a.id ? 'Completando...' : '✓ Completar'}
+                </button>
+                
+                {/* Botones de administración - solo admin */}
+                {isAdmin && (
                   <>
                     <button onClick={() => startEdit(a)} className="rounded-lg border px-2 py-1 text-xs hover:bg-slate-50">Editar</button>
                     <button onClick={() => removeItem(a.id)} disabled={deletingId === a.id} className="rounded-lg border px-2 py-1 text-xs hover:bg-slate-50 disabled:opacity-50">{deletingId === a.id ? 'Eliminando...' : 'Eliminar'}</button>
                   </>
-                ) : (
-                  <span className="text-slate-400 text-xs">-</span>
                 )}
               </td>
             </tr>
