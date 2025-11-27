@@ -1,0 +1,46 @@
+services:
+  # Backend FastAPI
+  backend:
+    build:
+      context: .
+      dockerfile: Dockerfile.backend
+    container_name: luxchile_backend
+    environment:
+      DB_PATH: /app/data/inventario.db
+      AUTH_SECRET: dev-secret-key-change-in-production
+      AUTH_TTL: "86400"
+    volumes:
+      - ./app:/app/app
+      - sqlite_data:/app/data
+    ports:
+      - "8000:8000"
+    networks:
+      - luxchile_network
+    command: uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
+
+  # Frontend React + Vite
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+    container_name: luxchile_frontend
+    volumes:
+      - ./frontend/src:/app/src
+      - ./frontend/public:/app/public
+      - ./frontend/index.html:/app/index.html
+      - /app/node_modules
+    ports:
+      - "5173:5173"
+    depends_on:
+      - backend
+    networks:
+      - luxchile_network
+    environment:
+      - VITE_API_BASE=http://localhost:8000
+
+networks:
+  luxchile_network:
+    driver: bridge
+
+volumes:
+  sqlite_data:
