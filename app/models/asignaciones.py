@@ -1,6 +1,7 @@
 # app/models/asignaciones.py
 from sqlalchemy import Column, Integer, String, DateTime, ForeignKey, Text
 from sqlalchemy.orm import relationship
+from datetime import datetime
 from app.db.database import Base
 
 class Responsable(Base):
@@ -24,10 +25,13 @@ class Asignacion(Base):
     vehicle_id = Column(String, nullable=False)
 
     prioridad = Column(String, nullable=False)  # ALTA | MEDIA | BAJA
+    estado = Column(String, nullable=False, default="ASIGNADA")  # ASIGNADA | EN_CURSO | COMPLETADA | CANCELADA
     origen = Column(String, nullable=False)
     destino = Column(String, nullable=False)
 
-    fecha_hora = Column(DateTime, nullable=True)
+    fecha_hora = Column(DateTime, nullable=True)  # Fecha programada
+    fecha_creacion = Column(DateTime, nullable=False, default=datetime.utcnow)  # Fecha de creación
+    fecha_completada = Column(DateTime, nullable=True)  # Fecha de completación
     notas = Column(Text, nullable=True)
 
     responsable_id = Column(Integer, ForeignKey("responsables.id"), nullable=False)

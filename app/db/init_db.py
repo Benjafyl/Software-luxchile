@@ -7,40 +7,28 @@ cur = conn.cursor()
 # --- Inventario (MVP Sprint 1)
 cur.execute("""
 CREATE TABLE IF NOT EXISTS inventario (
-  sku TEXT,
-  bodega TEXT,
-  stock INTEGER,
-  stock_minimo INTEGER
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  sku TEXT NOT NULL,
+  bodega TEXT NOT NULL,
+  stock INTEGER NOT NULL,
+  estado TEXT NOT NULL
 )
 """)
 
-# Datos de ejemplo (puedes quitarlos si no quieres resetear)
+# Datos de ejemplo - Solo 6 registros únicos (1 SKU por bodega)
 cur.execute("DELETE FROM inventario")
 cur.executemany(
     """
-    INSERT INTO inventario (sku, bodega, stock, stock_minimo)
+    INSERT INTO inventario (sku, bodega, stock, estado)
     VALUES (?, ?, ?, ?)
     """,
     [
-        # SKU001 - ejemplo mixto (OK y BAJO_STOCK)
-        ("SKU001", "Bodega Santiago", 50, 20),
-        ("SKU001", "Bodega Viña del Mar", 10, 20),  # BAJO_STOCK
-
-        # SKU002 - disponibilidad amplia en dos bodegas
-        ("SKU002", "Bodega Santiago", 100, 30),
-        ("SKU002", "Bodega Concepción", 65, 25),
-
-        # SKU003 - uno bajo, otro sobre mínimo
-        ("SKU003", "Bodega Santiago", 5, 20),        # BAJO_STOCK
-        ("SKU003", "Bodega Concepción", 24, 15),
-
-        # SKU004 - presencia en norte y centro
-        ("SKU004", "Bodega Antofagasta", 7, 10),     # BAJO_STOCK
-        ("SKU004", "Bodega Viña del Mar", 50, 25),
-
-        # SKU005 - stock alto y cero en sur
-        ("SKU005", "Bodega Santiago", 120, 30),
-        ("SKU005", "Bodega Puerto Montt", 0, 5),     # BAJO_STOCK
+        ("SKU001", "Bodega Central Santiago", 150, "DISPONIBLE"),
+        ("SKU002", "Bodega Valparaíso", 230, "DISPONIBLE"),
+        ("SKU003", "Bodega Concepción", 89, "DISPONIBLE"),
+        ("SKU004", "Bodega Norte Antofagasta", 340, "DISPONIBLE"),
+        ("SKU005", "Bodega Sur Temuco", 78, "DISPONIBLE"),
+        ("SKU006", "Bodega Viña del Mar", 210, "DISPONIBLE"),
     ],
 )
 

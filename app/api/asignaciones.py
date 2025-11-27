@@ -5,6 +5,7 @@ from datetime import datetime
 
 from app.db.database import get_db
 from app.models.asignaciones import Asignacion, Responsable
+from app.models.users import User
 from app.api.schemas_asignaciones import AsignacionIn, AsignacionOut, ResponsableIn, AsignacionUpdate
 from app.core.security import require_role, get_current_user, AuthUser
 
@@ -24,6 +25,19 @@ def _get_or_create_responsable(db: Session, data: ResponsableIn | None) -> Respo
         raise HTTPException(400, "responsable.rut (o employee_id) es requerido")
     rut = data.rut.strip().upper()
 
+    # VALIDACIÓN: Verificar que el RUT exista en la tabla users
+    user = db.query(User).filter(User.rut == rut).first()
+    if not user:
+        raise HTTPException(
+            400, 
+            f"El RUT {rut} no está registrado en el sistema. "
+            f"Debe registrar primero al usuario antes de asignarlo como responsable."
+        )
+    
+    # Verificar que el usuario esté activo
+    if not user.is_active:
+        raise HTTPException(400, f"El usuario con RUT {rut} está inactivo")
+
     resp = db.query(Responsable).filter(Responsable.rut == rut).first()
     if resp:
         # actualiza si vienen datos nuevos
@@ -36,10 +50,10 @@ def _get_or_create_responsable(db: Session, data: ResponsableIn | None) -> Respo
         db.flush()
         return resp
 
-    # nombre por defecto "" para evitar NOT NULL si la columna se dejó nullable=False
+    # Crear nuevo responsable usando datos del usuario si no se proporcionan
     resp = Responsable(
         rut=rut,
-        nombre=data.nombre or "",
+        nombre=data.nombre or user.full_name or "",
         email=data.email,
         telefono=data.telefono,
     )
@@ -78,16 +92,24 @@ def crear_asignacion_root(
 @router.get("", response_model=list[AsignacionOut])
 def listar_asignaciones(
     limit: int = Query(10, ge=1, le=100),
+    include_completed: bool = Query(False, description="Incluir asignaciones completadas"),
     db: Session = Depends(get_db),
     user: AuthUser = Depends(get_current_user),
 ):
     q = db.query(Asignacion)
+    
+    # Filtrar por rol
     if user.role == "worker":
         # unir con Responsable para filtrar por rut del usuario
         q = (
             q.join(Responsable, Responsable.id == Asignacion.responsable_id)
             .filter(Responsable.rut == (user.rut or ""))
         )
+    
+    # Por defecto, excluir completadas del listado reciente
+    if not include_completed:
+        q = q.filter(Asignacion.estado != "COMPLETADA")
+    
     q = q.order_by(Asignacion.id.desc()).limit(limit).all()
     return q
 
@@ -129,6 +151,8 @@ def actualizar_asignacion(
         asign.vehicle_id = payload.vehicle_id.strip()
     if payload.prioridad is not None:
         asign.prioridad = payload.prioridad
+    if payload.estado is not None:
+        asign.estado = payload.estado
     if payload.origen is not None and payload.origen.strip():
         asign.origen = payload.origen.strip()
     if payload.destino is not None and payload.destino.strip():
@@ -138,6 +162,31 @@ def actualizar_asignacion(
     if payload.notas is not None:
         asign.notas = payload.notas or None
 
+    db.commit()
+    db.refresh(asign)
+    return asign
+
+
+@router.patch("/{asign_id}/completar", response_model=AsignacionOut)
+def completar_asignacion(
+    asign_id: int,
+    db: Session = Depends(get_db),
+    user: AuthUser = Depends(get_current_user),
+):
+    """Marca una asignación como completada. Cualquier usuario puede completar su propia asignación."""
+    asign = db.query(Asignacion).filter(Asignacion.id == asign_id).first()
+    if not asign:
+        raise HTTPException(404, "Asignación no encontrada")
+    
+    # Si es worker, verificar que sea su asignación
+    if user.role == "worker":
+        if asign.responsable.rut != user.rut:
+            raise HTTPException(403, "No puedes completar asignaciones de otros usuarios")
+    
+    # Actualizar estado
+    asign.estado = "COMPLETADA"
+    asign.fecha_completada = datetime.utcnow()
+    
     db.commit()
     db.refresh(asign)
     return asign
