@@ -5,6 +5,7 @@ from datetime import datetime
 
 from app.db.database import get_db
 from app.models.asignaciones import Asignacion, Responsable
+from app.models.users import User
 from app.api.schemas_asignaciones import AsignacionIn, AsignacionOut, ResponsableIn, AsignacionUpdate
 from app.core.security import require_role, get_current_user, AuthUser
 
@@ -24,6 +25,19 @@ def _get_or_create_responsable(db: Session, data: ResponsableIn | None) -> Respo
         raise HTTPException(400, "responsable.rut (o employee_id) es requerido")
     rut = data.rut.strip().upper()
 
+    # VALIDACIÓN: Verificar que el RUT exista en la tabla users
+    user = db.query(User).filter(User.rut == rut).first()
+    if not user:
+        raise HTTPException(
+            400, 
+            f"El RUT {rut} no está registrado en el sistema. "
+            f"Debe registrar primero al usuario antes de asignarlo como responsable."
+        )
+    
+    # Verificar que el usuario esté activo
+    if not user.is_active:
+        raise HTTPException(400, f"El usuario con RUT {rut} está inactivo")
+
     resp = db.query(Responsable).filter(Responsable.rut == rut).first()
     if resp:
         # actualiza si vienen datos nuevos
@@ -36,10 +50,10 @@ def _get_or_create_responsable(db: Session, data: ResponsableIn | None) -> Respo
         db.flush()
         return resp
 
-    # nombre por defecto "" para evitar NOT NULL si la columna se dejó nullable=False
+    # Crear nuevo responsable usando datos del usuario si no se proporcionan
     resp = Responsable(
         rut=rut,
-        nombre=data.nombre or "",
+        nombre=data.nombre or user.full_name or "",
         email=data.email,
         telefono=data.telefono,
     )
